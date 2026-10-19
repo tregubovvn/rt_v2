@@ -32,6 +32,12 @@ const state = {
     gistUrl: null,
     rawUrl: null,
     gistFilename: GIST_FILENAME,
+    // Активные промпты DeepSeek (по режимам). Резервные тексты на случай,
+    // если загрузка с GitHub Gist не удалась; затем перезаписываются Gist-промптами.
+    dsPrompts: {
+        paragraphs: 'Работай с XML-заданием ниже в режиме АБЗАЦЕВ: улучши/сгенерируй тексты фрагментов (<text> внутри <fragment>), сохраняя структуру XML, количество и содержимое вопросов неизменными.',
+        proposals: 'Работай с XML-заданием ниже в режиме ПРЕДЛОЖЕНИЙ: проверь/улучши вопросы и предложения (question/options/answer) на основе текстов фрагментов, сохраняя структуру XML.',
+    },
     dirty: false,               // есть несохранённые изменения
     isSaving: false,
     needsAnotherSave: false,
@@ -42,10 +48,7 @@ const state = {
 };
 
 // Отладочный доступ к состоянию из консоли браузера (window.editorState.state)
-window.editorState = { state, api: {
-    publishToGist, publishToGitverse, saveToFile, askDeepSeek, setDsMode, currentDsMode,
-    generateXml, parseXmlToData, DS_PROMPTS
-} };
+window.editorState = { state, api: {} };
 
 let els = {};                   // кэш ссылок на DOM-элементы
 
@@ -59,6 +62,12 @@ document.addEventListener('DOMContentLoaded', () => {
     renderModeSwitch();
     initResizer();
     bindEvents();
+    // Отладочный доступ к функциям (все объявления подняты — можно ссылаться)
+    Object.assign(window.editorState.api, {
+        publishToGist, publishToGitverse, saveToFile, askDeepSeek, setDsMode, currentDsMode,
+        generateXml, parseXmlToData, loadPromptsFromGists, buildDsPrompt, PROMPT_GIST_URLS,
+    });
+    loadPromptsFromGists();   // подгружаем тексты промптов с GitHub Gist
 });
 
 function cacheElements() {
@@ -208,7 +217,24 @@ function renderModeSwitch() {
     els.btnModeParagraphs.classList.toggle('active', mode === 'paragraphs');
     els.btnModeProposals.setAttribute('aria-checked', String(mode === 'proposals'));
     els.btnModeParagraphs.setAttribute('aria-checked', String(mode === 'paragraphs'));
-    els.promptText.textContent = DS_PROMPTS[mode] || DS_PROMPTS.paragraphs;
+    els.promptText.textContent = state.dsPrompts[mode] || state.dsPrompts.paragraphs;
+    updatePromptGistLink(mode);
+}
+
+// Ссылка на Gist с активным промптом (рядом с текстом промпта, под окном XML)
+function updatePromptGistLink(mode) {
+    const link = document.getElementById('promptGistLink');
+    if (!link) return;
+    const url = PROMPT_GIST_URLS[mode] || '';
+    link.href = url;
+    link.textContent = 'Открыть промпт на GitHub Gist ↗';
+}
+
+// Полное сообщение для отправки в DeepSeek: промпт из Gist + XML из панели
+function buildDsMessage(mode) {
+    const base = state.dsPrompts[mode] || state.dsPrompts.paragraphs;
+    const xml = els.xmlEditor.value || generateXml();
+    return buildDsPrompt(base) + '\n\nXML-ЗАДАНИЕ:\n' + xml;
 }
 
 // ============================================================
@@ -971,13 +997,68 @@ async function loadFromGist() {
 
 // ============================================================
 // DeepSeek: два режима — абзацы / предложения.
+// Сами промпты берутся из GitHub GIST (ссылки ниже): они
+// скачиваются при открытии редактора и показываются в панели
+// под окном XML; именно они отправляются в DeepSeek.
 // Текст берётся из окна XML, результат возвращается в окно XML.
-// Без токена: копируем текст+промпт и открываем чат DeepSeek.
+// Без токена: копируем промпт+XML и открываем чат DeepSeek.
 // ============================================================
-const DS_PROMPTS = {
-    paragraphs: 'Работай с XML-заданием ниже в режиме АБЗАЦЕВ: улучши/сгенерируй тексты фрагментов (<text> внутри <fragment>), сохраняя структуру XML, количество и содержимое вопросов неизменными. Ответь ТОЛЬКО готовым XML без пояснений и без markdown.',
-    proposals: 'Работай с XML-заданием ниже в режиме ПРЕДЛОЖЕНИЙ: сгенерируй/улучши вопросы и предложения (question/options/answer) на основе текстов фрагментов, сохраняя структуру XML. Ответь ТОЛЬКО готовым XML без пояснений и без markdown.',
+
+// Ссылки на промпты в GitHub Gist (режим «Абзацы» / режим «Предложения»)
+const PROMPT_GIST_URLS = {
+    // «Промпт для создания заданий READ» (тексты абзацев → структура задания)
+    paragraphs: 'https://gist.github.com/tregubovvn/e837aa6949f0b20dee3925983ba2f424',
+    // «Промпт для проверки готового задания READ» (вопросы/предложения)
+    proposals: 'https://gist.github.com/tregubovvn/61c8a72e42d33dbdccf81d42cfda87f2',
 };
+
+// Конец сообщения модели — этим блоком модель подтверждает, что задание
+// готово полностью; если его нет, просим модель продолжить.
+const READY_MARKER = '[RE:AD-TEST-READY]';
+
+// Добавляем к промпту из Gist технические требования к формату ответа
+function buildDsPrompt(basePrompt) {
+    return (basePrompt || '').trim() + '\n\n' +
+        'ТЕХНИЧЕСКИЕ ТРЕБОВАНИЯ К ОТВЕТУ:\n' +
+        '1. Входные данные — XML-файл задания (приведён после этого промпта).\n' +
+        '2. Ответь ТОЛЬКО полным готовым XML (<readingTest>...</readingTest>) без пояснений и без блоков markdown.\n' +
+        '3. Сохрани все метаданные: topicName, author, university, discipline, targetAudience.\n' +
+        '4. Последней строкой ответа добавь точный маркер: ' + READY_MARKER;
+}
+
+async function fetchGistRaw(url) {
+    const m = url.match(/(?:gist\.github\.com|gist\.githubusercontent\.com)\/(?:[^/\s]+\/)?([0-9a-f]{7,})/i);
+    if (!m) throw new Error('Некорректная ссылка на Gist: ' + url);
+    const res = await fetch('https://api.github.com/gists/' + m[1]);
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' при загрузке Gist');
+    const data = await res.json();
+    const files = Object.values(data.files || {});
+    if (!files.length) throw new Error('В Gist нет файлов');
+    // предпочитает .md/.txt, иначе первый файл
+    const preferred = files.find(f => /\.(md|txt)$/i.test(f.filename)) || files[0];
+    const rawRes = await fetch(preferred.raw_url);
+    if (!rawRes.ok) throw new Error('HTTP ' + rawRes.status + ' при чтении файла Gist');
+    return await rawRes.text();
+}
+
+// Загрузка обоих промптов из Gist; при сетевой ошибке оставляем резервные тексты
+async function loadPromptsFromGists() {
+    setStatus('Загрузка промптов с GitHub Gist…');
+    let loaded = 0, failed = 0;
+    for (const mode of ['paragraphs', 'proposals']) {
+        try {
+            const text = await fetchGistRaw(PROMPT_GIST_URLS[mode]);
+            if (text.trim()) { state.dsPrompts[mode] = text.trim(); loaded++; }
+        } catch (e) {
+            console.warn('Не удалось загрузить промпт (' + mode + '):', e);
+            failed++;
+        }
+    }
+    renderModeSwitch();
+    if (loaded === 2) setStatus('Готово: промпты загружены с Gist');
+    else if (loaded === 1) setStatus('Готово: один промпт загружен с Gist, второй — резервный');
+    else if (failed) setStatus('Готово (промпты с Gist не загрузились — используются резервные тексты)');
+}
 
 function extractXmlFromText(text) {
     if (!text) return '';
@@ -990,20 +1071,37 @@ function extractXmlFromText(text) {
     return candidate.trim();
 }
 
+// Отправка одного сообщения в DeepSeek; возвращает текст ответа модели.
+async function deepseekChat(token, messages) {
+    const res = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ model: 'deepseek-chat', messages, stream: false }),
+    });
+    let data = null;
+    try { data = await res.json(); } catch (e) { /* не-JSON ответ */ }
+    if (!res.ok) {
+        throw new Error((data && (data.error?.message || data.message)) || 'HTTP ' + res.status);
+    }
+    const reply = data?.choices?.[0]?.message?.content;
+    if (!reply) throw new Error('Некорректный ответ модели');
+    return reply;
+}
+
 async function askDeepSeek(mode) {
+    mode = mode || currentDsMode();
     localStorage.setItem(LS.dsMode, mode);
     renderModeSwitch();
 
     const token = getDeepseekToken();
     const xml = els.xmlEditor.value || generateXml();
     if (!xml.trim()) return showToast('XML пуст', true);
-    const prompt = DS_PROMPTS[mode] || DS_PROMPTS.paragraphs;
 
-    // Без токена: копировать текст+промпт в буфер и открыть чат DeepSeek
+    // Без токена: копировать промпт+XML в буфер и открыть чат DeepSeek
     if (!token) {
-        const payload = prompt + '\n\n' + xml;
+        const payload = buildDsMessage(mode);
         try { await navigator.clipboard.writeText(payload); } catch (e) { /* не критично */ }
-        showToast('XML и промпт скопированы — вставьте их в чат DeepSeek (открыт в новом окне)');
+        showToast('Промпт и XML скопированы — вставьте их в чат DeepSeek (открыт в новом окне)');
         openExternal('https://chat.deepseek.com/');
         return;
     }
@@ -1011,22 +1109,29 @@ async function askDeepSeek(mode) {
     setStatus('DeepSeek (' + (mode === 'proposals' ? 'режим предложений' : 'режим абзацев') + ')…');
     showToast('Думаю…');
     try {
-        const res = await fetch('https://api.deepseek.com/chat/completions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({
-                model: 'deepseek-chat',
-                messages: [{ role: 'user', content: prompt + '\n\n' + xml }],
-                stream: false,
-            }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error?.message || 'Неизвестная ошибка');
+        const messages = [{ role: 'user', content: buildDsMessage(mode) }];
+        let fullReply = '';
+        // Модель могла не закончить задание за один ответ (нет финального блока) —
+        // просим продолжить, максимум 3 дополнительных запроса.
+        for (let i = 0; i < 4; i++) {
+            const reply = await deepseekChat(token, messages);
+            fullReply += (i > 0 ? '\n' : '') + reply;
+            messages.push({ role: 'assistant', content: reply });
+            if (fullReply.includes(READY_MARKER)) break;
+            const hasOpen = (fullReply.match(/<readingTest>/g) || []).length;
+            const hasClose = (fullReply.match(/<\/readingTest>/g) || []).length;
+            if (hasOpen > 0 && hasOpen === hasClose && extractXmlFromText(fullReply).includes('</fragment>')) {
+                break; // XML выглядит завершённым, даже если модель забыла маркер
+            }
+            if (i === 3) break;
+            setStatus('DeepSeek: задание неполное — прошу модель продолжить…');
+            messages.push({ role: 'user', content: 'Задание ещё не готово (нет финального XML и маркера ' + READY_MARKER + '). Продолжи и выдай ПОЛНЫЙ готовый XML целиком, без пояснений.' });
+        }
 
-        const reply = data.choices?.[0]?.message?.content;
-        if (!reply) throw new Error('Некорректный ответ модели');
-
-        const resultXml = extractXmlFromText(reply);
+        const resultXml = extractXmlFromText(fullReply);
+        if (!resultXml || !resultXml.includes('<readingTest')) {
+            throw new Error('В ответе модели нет XML-задания');
+        }
         els.xmlEditor.value = resultXml;
         // Результат сразу применяем к редактору (и он же сохранится на диск при автосохранении)
         if (parseXmlToData(resultXml)) {
@@ -1035,7 +1140,7 @@ async function askDeepSeek(mode) {
             updateXmlOutput({ immediate: true, force: true });
             showToast('Ответ DeepSeek применён к XML и редактору');
         } else {
-            showToast('Ответ получен, но XML некорректен — проверьте панель XML');
+            showToast('Ответ получен, но XML некорректен — проверьте панель XML', true);
         }
         setStatus('DeepSeek: ответ получен');
     } catch (e) {
@@ -1045,10 +1150,10 @@ async function askDeepSeek(mode) {
     }
 }
 
-// Кнопки «Промпт: …» — копируют соответствующий промпт в буфер обмена
+// Кнопка «📋 Промпт» — копирует активный промпт (из Gist) в буфер обмена
 async function copyPrompt(mode) {
     try {
-        await navigator.clipboard.writeText(DS_PROMPTS[mode]);
+        await navigator.clipboard.writeText(state.dsPrompts[mode] || '');
         showToast('Промпт скопирован в буфер обмена');
     } catch (e) {
         showToast('Не удалось скопировать промпт', true);

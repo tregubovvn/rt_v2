@@ -520,6 +520,15 @@ body {
 
 .prompt-spacer { flex: 1; }
 
+/* Ссылка на Gist с активным промптом (в панели под окном XML) */
+.prompt-gist-link {
+    font-size: 0.78rem;
+    color: var(--accent, #6c8cff);
+    text-decoration: none;
+    white-space: nowrap;
+}
+.prompt-gist-link:hover { text-decoration: underline; }
+
 .prompt-text {
     margin: 0;
     white-space: pre-wrap;
