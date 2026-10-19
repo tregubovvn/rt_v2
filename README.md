@@ -6,11 +6,11 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 
-https://tregubovvn.github.io/rt/editor/index.html
+https://tregubovvn.github.io/rt_v2/editor/index.html
 
-https://tregubovvn.github.io/rt/right_answer/index.html?xml=https://tregubovvn.github.io/rt/text2.xml 
+https://tregubovvn.github.io/rt_v2/right_answer/index.html?xml=https://tregubovvn.github.io/rt/text2.xml 
 
-https://tregubovvn.github.io/rt/index.html?file=https://tregubovvn.github.io/rt/tsup/1.xml 
+https://tregubovvn.github.io/rt_v2/index.html?file=https://tregubovvn.github.io/rt/tsup/1.xml 
 
 https://gist.github.com/tregubovvn/e837aa6949f0b20dee3925983ba2f424 
 
