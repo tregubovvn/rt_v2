@@ -13,6 +13,7 @@ const NEXT_QUESTION_DELAY = 800;    // мс, пауза после верног�
 const FINAL_NEXT_DELAY = 1200;      // мс, пауза перед следующим вопросом финального теста
 const WRONG_ANSWER_RESET_DELAY = 1000; // мс, сброс подсветки неверного ответа
 const TEACHER_PAGE_URL = 'https://tregubovvn.github.io/rt/right_answer/index.html';
+const PASS_RATIO = 0.7;             // доля правильных ответов для оценки не ниже «3»
 
 // Оценивание по числу ошибок в финальном тесте: [мин. ошибок, оценка]
 const GRADE_SCALE = [
@@ -25,12 +26,14 @@ const GRADE_SCALE = [
 // --- Состояние приложения ---
 const state = {
     fragments: [],
+    topicName: '',
     currentFragmentIndex: 0,
     currentQuestionIndex: 0,
     mode: 'reading',            // 'reading' | 'quiz' | 'final'
     timerId: null,
     seconds: 0,
     currentErrors: 0,
+    sessionStart: null,         // момент загрузки первого экрана с заданием (мс)
     results: createResults()
 };
 
@@ -46,9 +49,10 @@ function cacheElements() {
         'main-header', 'header-step', 'header-badge', 'error-counter-box', 'error-count',
         'pips-container', 'screen-auth', 'screen-process', 'screen-result',
         'input-fio', 'topic-name-label', 'file-input', 'file-btn-text', 'file-status',
-        'btn-start', 'btn-skip', 'btn-teacher',
+        'btn-start', 'btn-skip', 'btn-teacher', 'btn-finish',
         'timer-fill', 'content-area', 'controls-area',
-        'final-grade-val', 'final-fio', 'stat-time', 'stat-errors', 'results-table'
+        'final-grade-val', 'final-fio', 'stat-time', 'stat-errors', 'results-table',
+        'info-fio', 'info-topic', 'info-datetime', 'info-elapsed'
     ];
     ids.forEach((id) => { el[id] = document.getElementById(id); });
 }
@@ -139,10 +143,13 @@ function loadTask(xmlString) {
     try {
         const task = parseTaskXml(xmlString);
         state.fragments = task.fragments;
+        state.topicName = task.topicName || '';
         el['topic-name-label'].textContent = task.topicName
             ? 'Тема: ' + task.topicName
             : 'Тема:';
         ['btn-start', 'btn-skip', 'btn-teacher'].forEach((id) => { el[id].disabled = false; });
+        // «Первый экран» с заданием загружен — с этого момента идёт отсчёт времени сдачи
+        state.sessionStart = Date.now();
         return true;
     } catch (err) {
         console.error(err);
@@ -446,25 +453,66 @@ function handleFinalAnswer(q, value, correct) {
 
 // --- Результаты ---
 
-function calculateGrade(errors) {
-    const rule = GRADE_SCALE.find((r) => errors >= r.minErrors);
-    return rule.grade;
+/**
+ * Оценка по результатам финального теста:
+ *  - пройдено более 70% вопросов -> как минимум «3»;
+ *    далее «4» и «5» — по порогу правильных ответов (80% / 90%);
+ *  - не пройдено (<=70%) -> «2».
+ */
+function calculateGrade(correct, total) {
+    if (total <= 0) return 2;
+    const ratio = correct / total;
+    if (ratio > PASS_RATIO) {
+        if (ratio >= 0.9) return 5;
+        if (ratio >= 0.8) return 4;
+        return 3;
+    }
+    return 2;
+}
+
+/** Форматирование длительности: Чч Мм Сс. */
+function formatDuration(totalSeconds) {
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    return (h ? h + 'ч ' : '') + (h || m ? m + 'м ' : '') + s + 'с';
 }
 
 function finishTest() {
-    showScreen('result');
+    clearInterval(state.timerId);   // остановить таймер фрагмента
 
     const finalAnswers = state.results.answers.filter((a) => a.stage === 'final');
-    const totalSeconds = state.results.times.reduce((sum, t) => sum + t.spent, 0);
-    const errors = finalAnswers.filter((a) => !a.correct).length;
+    const answeredCount = finalAnswers.length;
+    const correctCount = finalAnswers.filter((a) => a.correct).length;
+    const errors = answeredCount - correctCount;
+
+    // Затраченное время — с момента загрузки первого экрана (экран авторизации)
+    const elapsedMs = state.sessionStart ? (Date.now() - state.sessionStart) : 0;
+    const elapsedSec = Math.round(elapsedMs / 1000);
+
+    // Дата и время сдачи
+    const now = new Date();
+    const dateTimeStr = now.toLocaleDateString('ru-RU') + ' ' + now.toLocaleTimeString('ru-RU');
+
+    // Верхний блок результатов: ФИО, тема, дата/время сдачи, затрачено времени
+    el['info-fio'].textContent = el['input-fio'].value.trim() || '—';
+    el['info-topic'].textContent = state.topicName || '—';
+    el['info-datetime'].textContent = dateTimeStr;
+    el['info-elapsed'].textContent = formatDuration(elapsedSec);
 
     el['final-fio'].textContent = el['input-fio'].value.trim();
-    el['final-grade-val'].textContent = calculateGrade(errors);
-    el['stat-time'].textContent =
-        Math.floor(totalSeconds / 60) + 'м ' + (totalSeconds % 60) + 'с';
+    el['final-grade-val'].textContent = calculateGrade(correctCount, allQuestions().length);
+    el['stat-time'].textContent = formatDuration(elapsedSec);
     el['stat-errors'].textContent = errors;
 
     renderResultsTable(finalAnswers);
+    showScreen('result');
+}
+
+/** Кнопка «Завершить тест»: немедленный переход к окну результатов. */
+function requestFinishTest() {
+    if (!confirm('Завершить тест и перейти к результатам?')) return;
+    finishTest();
 }
 
 function renderResultsTable(finalAnswers) {
