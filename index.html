@@ -22,6 +22,9 @@
         </div>
 
         <div class="progress-pips" id="pips-container"></div>
+
+        <!-- Кнопка «Завершить тест» — есть всегда: немедленный переход к результатам -->
+        <button class="btn-finish" id="btn-finish" type="button" title="Завершить тест и перейти к результатам">Завершить тест</button>
     </div>
 
     <!-- Screen 1: Auth -->
@@ -58,6 +61,14 @@
 
     <!-- Screen 3: Results -->
     <div class="screen" id="screen-result">
+        <!-- Блок результатов: ФИО, тема теста, дата/время сдачи, затраченное время -->
+        <div class="result-info-block" id="result-info-block">
+            <div class="result-info-row"><span class="result-info-label">ФИО студента:</span> <span id="info-fio">—</span></div>
+            <div class="result-info-row"><span class="result-info-label">Тема теста:</span> <span id="info-topic">—</span></div>
+            <div class="result-info-row"><span class="result-info-label">Дата и время сдачи:</span> <span id="info-datetime">—</span></div>
+            <div class="result-info-row"><span class="result-info-label">Затрачено времени:</span> <span id="info-elapsed">—</span></div>
+        </div>
+
         <div class="result-header">
             <div class="grade-circle" id="final-grade-val">5</div>
             <h1 class="final-fio" id="final-fio">ФИО</h1>

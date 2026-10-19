@@ -81,7 +81,8 @@ function cacheElements() {
         'questionsContainer', 'fragmentTabs', 'prevBtn', 'nextBtn',
         'statusText', 'toast', 'gistLinkContainer', 'publishedTaskLink',
         'loadModal', 'loadGistId', 'settingsModal', 'metaModal',
-        'publishMenu', 'promptBar', 'promptText',
+        'publishMenu', 'promptBar', 'promptText', 'publishCheckNote',
+        'reviewPanel', 'reviewBody', 'reviewSummary', 'btnToggleReview',
         'btnModeProposals', 'btnModeParagraphs', 'btnCopyPrompt', 'btnReloadPrompt',
     ];
     els = {};
@@ -105,6 +106,10 @@ function bindEvents() {
     // Ссылка на задание — в строке темы (над навигацией по фрагментам)
     on('btnCopyTaskUrl', 'click', copyTaskUrl);
     on('btnOpenTaskTop', 'click', openTask);
+
+    // Правая панель обзора вопросов (быстрое пролистывание всех заданий)
+    els.btnToggleReview.addEventListener('click', toggleReviewPanel);
+    on('btnReviewClose', 'click', hideReviewPanel);
 
     // Метаданные данного теста — отдельное окно (кнопка в строке темы)
     on('btnMeta', 'click', showMetaModal);
@@ -134,6 +139,13 @@ function bindEvents() {
     // на диск, но НЕ пересинхронизируем редактор -> XML (иначе рекурсия и потеря фокуса).
     els.xmlEditor.addEventListener('input', () => {
         if (applyingXmlToEditor) return;
+        // Изменения в XML-окне: обновляем данные для проверки публикации и обзора.
+        // Парсим «тихо»: при некорректном XML редактор не перерисовываем, а поле
+        // ввода остаётся как есть (о пользователе уже предупреждает кнопка «Применить ▶»).
+        // Без toast: при живом наборе текста некорректный XML — норма
+        silentParseXml(els.xmlEditor.value);
+        updatePublishReadiness();
+        if (!els.reviewPanel.classList.contains('hidden')) renderReviewPanel();
         state.dirty = true;
         scheduleAutoSave();
     });
@@ -292,7 +304,25 @@ function buildDsMessage(mode) {
 // ============================================================
 // XML: парсинг и генерация
 // ============================================================
+// «Тихий» парсинг XML в состояние (без toast и без перерисовки редактора) —
+// используется при живом редактировании XML-панели, чтобы проверка публикации
+// и панель обзора видели актуальные данные.
+function silentParseXml(xmlString) {
+    applyingXmlToEditor = true;
+    try {
+        return parseXmlToDataQuiet(xmlString);
+    } finally {
+        applyingXmlToEditor = false;
+    }
+}
+
 function parseXmlToData(xmlString) {
+    const ok = parseXmlToDataQuiet(xmlString);
+    if (!ok) showToast('Некорректный XML', true);
+    return ok;
+}
+
+function parseXmlToDataQuiet(xmlString) {
     try {
         const parser = new DOMParser();
         const doc = parser.parseFromString(xmlString || '<readingTest/>', 'text/xml');
@@ -351,8 +381,7 @@ function parseXmlToData(xmlString) {
         }
         return true;
     } catch (e) {
-        showToast('Некорректный XML', true);
-        return false;
+        return false;   // сообщение показывает вызвавший (parseXmlToData) или «тихий» режим
     }
 }
 
@@ -413,6 +442,10 @@ function updateXmlOutput(opts = {}) {
     };
     if (opts.immediate || opts.force) sync();
     else state.syncTimeout = setTimeout(sync, 100);
+
+    // Индикатор готовности к публикации + панель обзора (если открыта)
+    updatePublishReadiness();
+    if (!els.reviewPanel.classList.contains('hidden')) renderReviewPanel();
 
     // Изменение В ЗАДАНИИ: помечаем как несохранённое и запускаем автосохранение
     if (!opts.silent) markTaskChanged();
@@ -516,6 +549,7 @@ function downloadBlob(content, fileName, statusPrefix = 'Файл сохранё
 function renderAll() {
     renderFragment();
     updateGistLinkDisplay();
+    updatePublishReadiness();
 }
 
 function renderFragment() {
@@ -787,6 +821,110 @@ async function saveToFile() {
 }
 
 // ============================================================
+// Проверка готовности задания + панель «Обзор» (правая)
+// ============================================================
+
+/**
+ * Индекс проблем с правильными ответами по всем фрагментам:
+ *  - вопросы типа choice без отмеченного правильного варианта;
+ *  - вопросы типа input с пустым полем ответа.
+ */
+function findAnswerIssues() {
+    const issues = [];
+    state.testData.fragments.forEach((frag, fi) => {
+        frag.questions.forEach((q, qi) => {
+            if (q.type === 'choice') {
+                if (!q.options.some(o => o.correct)) {
+                    issues.push({ fragment: fi, question: qi, reason: 'не выбран правильный вариант' });
+                }
+            } else if (!(q.answer || '').trim()) {
+                issues.push({ fragment: fi, question: qi, reason: 'пустой ответ' });
+            }
+        });
+    });
+    return issues;
+}
+
+function isPublishReady() {
+    return findAnswerIssues().length === 0;
+}
+
+// Обновление индикатора готовности рядом с кнопкой «Публикация»
+function updatePublishReadiness() {
+    const note = els.publishCheckNote;
+    if (!note) return;
+    const issues = findAnswerIssues();
+    note.classList.toggle('hidden', issues.length === 0);
+    if (issues.length) {
+        note.textContent = '⚠ нет правильного ответа: ' + issues.length + ' вопр.';
+    }
+}
+
+function toggleReviewPanel() {
+    if (els.reviewPanel.classList.contains('hidden')) showReviewPanel();
+    else hideReviewPanel();
+}
+
+function showReviewPanel() {
+    renderReviewPanel();
+    els.reviewPanel.classList.remove('hidden');
+    els.btnToggleReview.classList.add('active');
+}
+
+function hideReviewPanel() {
+    els.reviewPanel.classList.add('hidden');
+    els.btnToggleReview.classList.remove('active');
+}
+
+// Быстрый пролистыватель всех вопросов всех фрагментов с указанием
+// правильного ответа; клик по карточке открывает нужный фрагмент в редакторе.
+function renderReviewPanel() {
+    const body = els.reviewBody;
+    let totalQuestions = 0, badQuestions = 0;
+
+    body.innerHTML = state.testData.fragments.map((frag, fi) => {
+        const items = frag.questions.map((q, qi) => {
+            totalQuestions++;
+            let correctText, ok;
+            if (q.type === 'choice') {
+                const corr = q.options.filter(o => o.correct).map(o => o.text.trim()).filter(Boolean);
+                ok = corr.length > 0;
+                correctText = ok ? '✔ ' + corr.join('; ') : '— правильный вариант не выбран';
+            } else {
+                ok = !!(q.answer || '').trim();
+                correctText = ok ? '✔ ' + q.answer : '— ответ не задан';
+            }
+            if (!ok) badQuestions++;
+            return `<div class="review-item ${ok ? 'ok' : 'bad'}" data-frag="${fi}" data-q="${qi}" title="Открыть фрагмент ${fi + 1} в редакторе">
+                <div class="review-q"><span class="badge ${q.type === 'choice' ? 'badge-choice' : 'badge-input'}">${q.type === 'choice' ? 'Choice' : 'Input'}</span> Ф${fi + 1}·Q${qi + 1}: ${escHtml(q.text || '(без текста)')}</div>
+                <div class="review-a ${ok ? '' : 'missing'}">${escHtml(correctText)}</div>
+            </div>`;
+        }).join('');
+        return `<div class="review-fragment-title">Фрагмент ${fi + 1}</div>${items || '<div class="review-empty">Нет вопросов</div>'}`;
+    }).join('');
+
+    if (!totalQuestions) body.innerHTML = '<div class="review-empty">В задании ещё нет вопросов.</div>';
+
+    els.reviewSummary.textContent = totalQuestions
+        ? (badQuestions ? '⚠ ' + badQuestions + ' из ' + totalQuestions + ' без ответа' : '✓ ' + totalQuestions + ' вопросов готово')
+        : '';
+    els.reviewSummary.classList.toggle('bad', badQuestions > 0);
+
+    body.querySelectorAll('.review-item').forEach(item => {
+        item.addEventListener('click', () => {
+            goToFragment(+item.dataset.frag);
+            // Подсветим вопрос в редакторе
+            const block = els.questionsContainer.children[+item.dataset.q];
+            if (block) {
+                block.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                block.classList.add('flash-highlight');
+                setTimeout(() => block.classList.remove('flash-highlight'), 1200);
+            }
+        });
+    });
+}
+
+// ============================================================
 // Публикация: GitHub Gist / GitVerse (только по кнопке, возвращает ссылку)
 // ============================================================
 function toggleMenu(menu, otherMenu) {
@@ -799,10 +937,27 @@ function hideMenus() {
     els.publishMenu.classList.add('hidden');
 }
 
-// Публикация в Gist: если GIST уже привязан — обновляем его, иначе создаём новый
+// Публикация в Gist: если GIST уже привязан — обновляем его, иначе создаём новый.
+// Перед публикацией — проверка: у всех вопросов должен быть выбран правильный ответ.
 function publishToGist() {
+    if (!checkBeforePublish()) return;
     if (state.gistId) return saveToGist();
     return createNewGist();
+}
+
+// Проверка готовности к публикации; при проблемах — открываем панель обзора
+// и показываем список проблемных вопросов. Возвращает true, если публиковать можно.
+function checkBeforePublish() {
+    const issues = findAnswerIssues();
+    if (!issues.length) return true;
+    showReviewPanel();
+    const list = issues.slice(0, 8)
+        .map(i => `Ф${i.fragment + 1}·Q${i.question + 1} — ${i.reason}`)
+        .join('\n') + (issues.length > 8 ? `\n…и ещё ${issues.length - 8}` : '');
+    showToast('Публикация невозможна: не у всех вопросов выбран правильный ответ (' + issues.length + ')', true);
+    setStatus('Проверка перед публикацией: ' + issues.length + ' вопрос(ов) без правильного ответа:\n' + list.replace(/\n/g, ' · '));
+    alert('Перед публикацией нужно выбрать правильный ответ во всех вопросах.\n\nПроблемные вопросы:\n' + list + '\n\nОни отмечены красным в панели «Обзор» справа.');
+    return false;
 }
 
 function openExternal(url) { window.open(url, '_blank', 'noopener'); }
@@ -919,6 +1074,7 @@ async function saveToGist(opts = {}) {
 }
 
 async function publishToGitverse(opts = {}) {
+    if (!checkBeforePublish()) return;
     const token = getGitverseToken();
     if (!token) {
         showToast('Укажите токен GitVerse в настройках (⚙)', true);
