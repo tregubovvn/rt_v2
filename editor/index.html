@@ -18,6 +18,11 @@
             <div class="btn-group" role="group" aria-label="Файл">
                 <button type="button" class="btn" id="btnLoadGist" title="Загрузить задание из GitHub Gist">☁️ Загрузить из Gist</button>
                 <button type="button" class="btn btn-primary" id="btnSaveFile" title="Сохранить XML в файл на диск компьютера">💾 Сохранить в файл</button>
+                <label class="switch-inline" title="Автосохранение на диск при изменениях в задании (в выбранный файл или через скачивание)">
+                    <input type="checkbox" id="autoSaveToggle">
+                    <span class="switch-slider"></span>
+                    <span class="switch-caption">Автосохранение</span>
+                </label>
             </div>
 
             <div class="btn-group" role="group" aria-label="Публикация">
@@ -67,14 +72,6 @@
                 </div>
                 <textarea class="prompt-text prompt-editable" id="promptText" spellcheck="false"
                     title="Активный промпт — можно редактировать; изменения сохраняются в браузере"></textarea>
-                <div class="prompt-task-row" id="taskLinkRow">
-                    <span class="prompt-task-label">Задание:</span>
-                    <a id="gistLinkText" class="url-text" href="#" target="_blank" rel="noopener" title="Открыть страницу задания">—</a>
-                    <button type="button" class="btn-icon" id="btnCopyGistUrl" title="Скопировать ссылку на задание">
-                        <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-                    </button>
-                    <button type="button" class="btn btn-sm" id="btnOpenTask" title="Открыть задание в приложении RE:AD и скопировать ссылку">Открыть задание</button>
-                </div>
             </div>
         </aside>
 
@@ -184,23 +181,8 @@
                 </section>
 
                 <section class="settings-section">
-                    <h4>Автосохранение на диск компьютера</h4>
-                    <label class="switch-row">
-                        <input type="checkbox" id="autoSaveToggle">
-                        <span>Автосохранять XML в файл на диск при изменениях</span>
-                    </label>
-                    <div class="autosave-interval">
-                        <label class="label" for="saveInterval">Интервал сохранения (мс)</label>
-                        <input type="number" id="saveInterval" class="input-base" min="500" step="500">
-                    </div>
-                    <div class="token-row">
-                        <label class="label" for="autoSaveFolderName">Файл автосохранения</label>
-                        <div class="flex-gap">
-                            <input type="text" id="autoSaveFolderName" class="input-base input-mono" placeholder="reading_test.xml">
-                            <button type="button" class="btn btn-sm" id="btnPickAutoSaveFile" title="Выбрать файл на диске для автосохранения">Выбрать файл…</button>
-                        </div>
-                    </div>
-                    <p class="hint">При включении запросите разрешение браузера на запись в файл («Сохранить в…»). Если файл не выбран — браузер будет запрашивать его при каждом сохранении.</p>
+                    <h4>Публикация и сохранение</h4>
+                    <p class="hint"><strong>Автосохранение на диск компьютера</strong> включается переключателем рядом с кнопкой «💾 Сохранить в файл» и срабатывает только при изменениях в задании.</p>
                     <p class="hint"><strong>Публикация</strong> выполняется только кнопкой «🚀 Публикация» (GitHub Gist или GitVerse) — после публикации возвращается ссылка на задание.</p>
                 </section>
             </div>
