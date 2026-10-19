@@ -47,9 +47,19 @@
             </div>
 
             <div class="btn-group" role="group" aria-label="AI и справочное">
-                <button type="button" class="btn btn-ai" id="btnAskDeepSeek" title="Отправить XML в DeepSeek">✨ Ask DeepSeek</button>
-                <button type="button" class="btn btn-ghost" id="btnPromptProposal" title="Открыть промпт для предложения">Промпт: предложение</button>
-                <button type="button" class="btn btn-ghost" id="btnPromptQuestions" title="Открыть промпт для заданий">Промпт: задания</button>
+                <button type="button" class="btn btn-ai" id="btnAskDeepSeek" title="Отправить XML из панели в DeepSeek (режим по умолчанию)">✨ DeepSeek ▾</button>
+                <div class="publish-menu hidden" id="deepseekMenu">
+                    <button type="button" class="publish-item" id="btnDsParagraphs" title="Запросить генерацию/улучшение абзацев текста">
+                        <strong>Режим абзацев</strong>
+                        <span>XML + промпт абзацев → результат XML вернётся в панель</span>
+                    </button>
+                    <button type="button" class="publish-item" id="btnDsProposals" title="Запросить генерацию предложений/заданий">
+                        <strong>Режим предложений</strong>
+                        <span>XML + промпт предложений → результат XML вернётся в панель</span>
+                    </button>
+                </div>
+                <button type="button" class="btn btn-ghost" id="btnPromptProposal" title="Скопировать промпт для режима предложений">Промпт: предложение</button>
+                <button type="button" class="btn btn-ghost" id="btnPromptParagraphs" title="Скопировать промпт для режима абзацев">Промпт: абзацы</button>
             </div>
 
             <div class="btn-group" role="group" aria-label="Настройки">
@@ -149,12 +159,16 @@
                             <label class="label" for="university">Университет</label>
                             <input type="text" id="university" class="input-base" placeholder="Например: МГТУ им. Н.Э. Баумана">
                         </div>
+                        <div>
+                            <label class="label" for="discipline">Дисциплина</label>
+                            <input type="text" id="discipline" class="input-base" placeholder="Например: Программная инженерия">
+                        </div>
                         <div class="span-2">
                             <label class="label" for="audience">Целевая аудитория</label>
                             <input type="text" id="audience" class="input-base" placeholder="Например: студенты 2 курса, направление 09.03.04">
                         </div>
                     </div>
-                    <p class="hint">Поля попадают в XML как <code>&lt;author&gt;</code>, <code>&lt;university&gt;</code>, <code>&lt;targetAudience&gt;</code>.</p>
+                    <p class="hint">Поля попадают в XML как <code>&lt;author&gt;</code>, <code>&lt;university&gt;</code>, <code>&lt;discipline&gt;</code>, <code>&lt;targetAudience&gt;</code>.</p>
                 </section>
 
                 <section class="settings-section">
@@ -184,15 +198,24 @@
                 </section>
 
                 <section class="settings-section">
-                    <h4>Автосохранение</h4>
+                    <h4>Автосохранение на диск компьютера</h4>
                     <label class="switch-row">
                         <input type="checkbox" id="autoSaveToggle">
-                        <span>Автосохранять при изменениях (в последний выбранный сервис публикации)</span>
+                        <span>Автосохранять XML в файл на диск при изменениях</span>
                     </label>
                     <div class="autosave-interval">
                         <label class="label" for="saveInterval">Интервал сохранения (мс)</label>
                         <input type="number" id="saveInterval" class="input-base" min="500" step="500">
                     </div>
+                    <div class="token-row">
+                        <label class="label" for="autoSaveFolderName">Файл автосохранения</label>
+                        <div class="flex-gap">
+                            <input type="text" id="autoSaveFolderName" class="input-base input-mono" placeholder="reading_test.xml">
+                            <button type="button" class="btn btn-sm" id="btnPickAutoSaveFile" title="Выбрать файл на диске для автосохранения">Выбрать файл…</button>
+                        </div>
+                    </div>
+                    <p class="hint">При включении запросите разрешение браузера на запись в файл («Сохранить в…»). Если файл не выбран — браузер будет запрашивать его при каждом сохранении.</p>
+                    <p class="hint"><strong>Публикация</strong> выполняется только кнопкой «🚀 Публикация» (GitHub Gist или GitVerse) — после публикации возвращается ссылка на задание.</p>
                 </section>
             </div>
 

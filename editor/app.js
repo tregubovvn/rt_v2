@@ -19,13 +19,14 @@ const LS = {
     dsToken: 'ds_token',
     gvToken: 'gv_token',
     autoSave: 'editor_autosave_enabled',
-    meta: 'editor_meta_json',          // author / university / audience
+    meta: 'editor_meta_json',          // author / university / discipline / audience
+    dsMode: 'editor_deepseek_mode',    // paragraphs | proposals
 };
 
 // --- Состояние ---
 const state = {
     testData: { topicName: '', fragments: [] },
-    meta: { author: '', university: '', audience: '' },
+    meta: { author: '', university: '', discipline: '', audience: '' },
     currentFragmentIndex: 0,
     gistId: null,
     gistUrl: null,
@@ -37,6 +38,7 @@ const state = {
     skipNextAutoSave: false,
     syncTimeout: null,
     autoSaveTimeout: null,
+    fileHandle: null,           // FileSystemFileHandle для автосохранения на диск
 };
 
 // Отладочный доступ к состоянию из консоли браузера (window.editorState.state)
@@ -57,13 +59,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function cacheElements() {
     const ids = [
-        'topicName', 'author', 'university', 'audience',
+        'topicName', 'author', 'university', 'audience', 'discipline',
         'xmlEditor', 'xmlPanel', 'resizer', 'editorContainer',
         'fragmentCard', 'fragmentNumber', 'timeExcellent', 'timeGood', 'fragmentText',
         'questionsContainer', 'fragmentTabs', 'prevBtn', 'nextBtn',
         'statusText', 'toast', 'gistLinkContainer', 'gistLinkText',
         'loadModal', 'loadGistId', 'settingsModal', 'xmlFileInput',
-        'autoSaveToggle', 'saveInterval',
+        'autoSaveToggle', 'saveInterval', 'autoSaveFolderName',
+        'publishMenu', 'deepseekMenu',
     ];
     els = {};
     ids.forEach(id => { els[id] = document.getElementById(id); });
@@ -71,20 +74,23 @@ function cacheElements() {
 
 function bindEvents() {
     // Верхняя панель
-    on('btnPromptProposal', 'click', () => openExternal('https://gist.github.com/tregubovvn/36b6169ed472e716084c8fbde5e31012'));
-    on('btnPromptQuestions', 'click', () => openExternal('https://gist.github.com/tregubovvn/e837aa6949f0b20dee3925983ba2f424'));
+    on('btnPromptProposal', 'click', () => copyPrompt('proposals'));
+    on('btnPromptParagraphs', 'click', () => copyPrompt('paragraphs'));
     on('btnPublishGist', 'click', () => { hidePublishMenu(); publishToGist(); });
     on('btnPublishGitverse', 'click', () => { hidePublishMenu(); publishToGitverse(); });
     on('btnLoadGist', 'click', showLoadModal);
     on('btnOpenFile', 'click', () => els.xmlFileInput.click());
     on('btnSaveFile', 'click', saveToFile);
-    on('btnPublish', 'click', (e) => { e.stopPropagation(); togglePublishMenu(); });
+    on('btnPublish', 'click', (e) => { e.stopPropagation(); toggleMenu(els.publishMenu, els.deepseekMenu); });
     on('btnSettings', 'click', showSettingsModal);
     on('btnCopyGistUrl', 'click', copyGistUrl);
     on('btnOpenTask', 'click', openTask);
     on('btnCopyXml', 'click', copyXml);
     on('btnApplyXml', 'click', applyXmlChanges);
-    on('btnAskDeepSeek', 'click', askDeepSeek);
+    on('btnAskDeepSeek', 'click', (e) => { e.stopPropagation(); askDeepSeek(defaultDsMode()); });
+    on('btnDsParagraphs', 'click', (e) => { e.stopPropagation(); hideMenus(); askDeepSeek('paragraphs'); });
+    on('btnDsProposals', 'click', (e) => { e.stopPropagation(); hideMenus(); askDeepSeek('proposals'); });
+    on('btnPickAutoSaveFile', 'click', pickAutoSaveFile);
 
     els.xmlFileInput.addEventListener('change', (e) => loadXmlFromFile(e.target));
 
@@ -119,7 +125,7 @@ function bindEvents() {
     });
     els.autoSaveToggle.addEventListener('change', () => { saveSettings(); setStatus(autoSaveEnabled() ? 'Автосохранение включено' : 'Автосохранение выключено'); });
     els.saveInterval.addEventListener('change', saveSettings);
-    ['author', 'university', 'audience'].forEach(id => {
+    ['author', 'university', 'discipline', 'audience'].forEach(id => {
         els[id].addEventListener('input', () => { readMetaFromSettingsInputs(); updateXmlOutput(); });
     });
     els.topicName.addEventListener('input', () => {
@@ -127,12 +133,10 @@ function bindEvents() {
         updateXmlOutput();
     });
 
-    // Меню публикации — закрытие по клику вне
+    // Меню (публикация / DeepSeek) — закрытие по клику вне кнопок и самих меню
     document.addEventListener('click', (e) => {
-        const menu = document.getElementById('publishMenu');
-        if (!menu.classList.contains('hidden') && !menu.contains(e.target) && e.target.id !== 'btnPublish') {
-            hidePublishMenu();
-        }
+        if (e.target.closest('#btnPublish') || e.target.closest('#btnAskDeepSeek') || e.target.closest('.publish-menu')) return;
+        hideMenus();
     });
 }
 
@@ -147,16 +151,19 @@ function loadSettings() {
     document.getElementById('gitverseToken').value = localStorage.getItem(LS.gvToken) || '';
     els.autoSaveToggle.checked = localStorage.getItem(LS.autoSave) === '1';
     els.saveInterval.value = localStorage.getItem('editor_autosave_interval') || String(AUTOSAVE_DEBOUNCE_MS);
+    els.autoSaveFolderName.value = localStorage.getItem('editor_autosave_filename') || '';
 
     try {
         const meta = JSON.parse(localStorage.getItem(LS.meta) || '{}');
         state.meta.author = meta.author || '';
         state.meta.university = meta.university || '';
+        state.meta.discipline = meta.discipline || '';
         state.meta.audience = meta.audience || '';
     } catch (e) { /* повреждённые данные — используем пустые */ }
 
     els.author.value = state.meta.author;
     els.university.value = state.meta.university;
+    els.discipline.value = state.meta.discipline;
     els.audience.value = state.meta.audience;
 }
 
@@ -166,12 +173,14 @@ function saveSettings() {
     localStorage.setItem(LS.gvToken, document.getElementById('gitverseToken').value.trim());
     localStorage.setItem(LS.autoSave, els.autoSaveToggle.checked ? '1' : '0');
     localStorage.setItem('editor_autosave_interval', els.saveInterval.value);
+    localStorage.setItem('editor_autosave_filename', els.autoSaveFolderName.value.trim());
     localStorage.setItem(LS.meta, JSON.stringify(state.meta));
 }
 
 function readMetaFromSettingsInputs() {
     state.meta.author = els.author.value.trim();
     state.meta.university = els.university.value.trim();
+    state.meta.discipline = els.discipline.value.trim();
     state.meta.audience = els.audience.value.trim();
     saveSettings();
 }
@@ -181,6 +190,7 @@ function getDeepseekToken() { return document.getElementById('deepseekToken').va
 function getGitverseToken() { return document.getElementById('gitverseToken').value.trim(); }
 function autoSaveEnabled() { return els.autoSaveToggle.checked; }
 function autoSaveDelayMs() { return parseInt(els.saveInterval.value, 10) || AUTOSAVE_DEBOUNCE_MS; }
+function defaultDsMode() { return localStorage.getItem(LS.dsMode) || 'paragraphs'; }
 
 // ============================================================
 // XML: парсинг и генерация
@@ -198,12 +208,14 @@ function parseXmlToData(xmlString) {
         const meta = {
             author: doc.querySelector('author')?.textContent || '',
             university: doc.querySelector('university')?.textContent || '',
+            discipline: doc.querySelector('discipline')?.textContent || '',
             audience: doc.querySelector('targetAudience')?.textContent || '',
         };
-        if (meta.author || meta.university || meta.audience) {
+        if (meta.author || meta.university || meta.discipline || meta.audience) {
             state.meta = meta;
             els.author.value = meta.author;
             els.university.value = meta.university;
+            els.discipline.value = meta.discipline;
             els.audience.value = meta.audience;
             saveSettings();
         }
@@ -253,6 +265,7 @@ function generateXml() {
     xml += `<topicName>${escapeXml(state.testData.topicName || '')}</topicName>\n`;
     if (m.author) xml += `<author>${escapeXml(m.author)}</author>\n`;
     if (m.university) xml += `<university>${escapeXml(m.university)}</university>\n`;
+    if (m.discipline) xml += `<discipline>${escapeXml(m.discipline)}</discipline>\n`;
     if (m.audience) xml += `<targetAudience>${escapeXml(m.audience)}</targetAudience>\n`;
     state.testData.fragments.forEach(frag => {
         xml += `<fragment timeExcellent="${frag.timeExcellent}" timeGood="${frag.timeGood}">\n`;
@@ -308,18 +321,87 @@ function updateXmlOutput(opts = {}) {
 function scheduleAutoSave() {
     if (!autoSaveEnabled()) return;
     if (state.skipNextAutoSave) { state.skipNextAutoSave = false; return; }
-    setStatus(state.gistId || state.gitverseProject ? 'Есть несохранённые изменения…' : 'Несохранённые изменения (публикация не привязана)');
+    setStatus('Автосохранение на диск…');
     clearTimeout(state.autoSaveTimeout);
     state.autoSaveTimeout = setTimeout(() => {
-        // Автосохраняем туда, куда последний раз публиковали
-        if (state.lastPublishTarget === 'gitverse') {
-            publishToGitverse({ silent: true });
-        } else if (state.gistId) {
-            saveToGist({ silent: true });
-        } else {
-            setStatus('Автосохранение: сначала опубликуйте задание (Gist/GitVerse) или используйте «Сохранить в файл»');
-        }
+        state.autoSaveTimeout = null;
+        autoSaveToDisk();
     }, autoSaveDelayMs());
+}
+
+// Автосохранение выполняется ТОЛЬКО на диск компьютера (в выбранный файл).
+// Публикация на сервисы — только по кнопке «Публикация».
+async function autoSaveToDisk() {
+    const content = els.xmlEditor.value || generateXml();
+    try {
+        if (state.fileHandle && await ensureFilePermission(state.fileHandle)) {
+            await writeFileHandle(state.fileHandle, content);
+            state.dirty = false;
+            setStatus('Автосохранено на диск: ' + state.fileHandle.name + ' в ' + new Date().toLocaleTimeString());
+            return;
+        }
+        // Файл для автосохранения не выбран — обычное скачивание браузера
+        downloadBlob(content, suggestedFileName(), 'Файл сохранён на диск (скачан): ');
+        state.dirty = false;
+    } catch (e) {
+        setStatus('Ошибка автосохранения на диск: ' + e.message);
+        showToast('Автосохранение: ' + e.message, true);
+    }
+}
+
+// Выбор постоянного файла для автосохранения (File System Access API)
+async function pickAutoSaveFile() {
+    if (!window.showSaveFilePicker) {
+        return showToast('Ваш браузер не поддерживает выбор файла для автосохранения (нужен Chrome/Edge). Используйте кнопку «Сохранить в файл».', true);
+    }
+    try {
+        const handle = await window.showSaveFilePicker({
+            suggestedName: suggestedFileName(),
+            types: [{ description: 'XML', accept: { 'text/xml': ['.xml'] } }],
+        });
+        state.fileHandle = handle;
+        els.autoSaveFolderName.value = handle.name;
+        saveSettings();
+        await writeFileHandle(handle, els.xmlEditor.value || generateXml());
+        state.dirty = false;
+        setStatus('Файл для автосохранения выбран: ' + handle.name);
+        showToast('Файл выбран, автосохранение будет писать в него');
+    } catch (e) {
+        if (e.name !== 'AbortError') showToast('Не удалось выбрать файл: ' + e.message, true);
+    }
+}
+
+async function ensureFilePermission(handle, requestWrite = true) {
+    if (!handle || !handle.requestPermission) return true; // Firefox и т.п. — без API проверки
+    try {
+        const opts = { mode: 'readwrite' };
+        let status = await handle.queryPermission(opts);
+        if (status === 'granted') return true;
+        if (!requestWrite) return false;
+        status = await handle.requestPermission(opts);
+        return status === 'granted';
+    } catch (e) {
+        return false;
+    }
+}
+
+async function writeFileHandle(handle, content) {
+    const writable = await handle.createWritable();
+    await writable.write(content);
+    await writable.close();
+}
+
+function downloadBlob(content, fileName, statusPrefix = 'Файл сохранён: ') {
+    const blob = new Blob([content], { type: 'text/xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setStatus(statusPrefix + fileName);
 }
 
 // ============================================================
@@ -552,16 +634,25 @@ async function saveToFile() {
     const content = els.xmlEditor.value || generateXml();
     const fileName = suggestedFileName();
 
-    // Предпочитаем диалог выбора папки (Chrome/Edge)
+    // Если файл для автосохранения уже выбран — пишем прямо в него
+    if (state.fileHandle && await ensureFilePermission(state.fileHandle)) {
+        try {
+            await writeFileHandle(state.fileHandle, content);
+            state.dirty = false;
+            setStatus('Сохранено в файл: ' + state.fileHandle.name);
+            showToast('Файл сохранён на диск');
+            return;
+        } catch (e) { /* падаем на диалог/скачивание */ }
+    }
+
+    // Диалог выбора места сохранения (Chrome/Edge)
     if (window.showSaveFilePicker) {
         try {
             const handle = await window.showSaveFilePicker({
                 suggestedName: fileName,
                 types: [{ description: 'XML', accept: { 'text/xml': ['.xml'] } }],
             });
-            const writable = await handle.createWritable();
-            await writable.write(content);
-            await writable.close();
+            await writeFileHandle(handle, content);
             state.dirty = false;
             setStatus('Сохранено в файл: ' + handle.name);
             showToast('Файл сохранён на диск');
@@ -572,28 +663,23 @@ async function saveToFile() {
         }
     }
 
-    const blob = new Blob([content], { type: 'text/xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadBlob(content, fileName);
     state.dirty = false;
-    setStatus('Файл сохранён: ' + fileName);
     showToast('Файл сохранён на диск');
 }
 
 // ============================================================
-// Публикация: GitHub Gist / GitVerse
+// Публикация: GitHub Gist / GitVerse (только по кнопке, возвращает ссылку)
 // ============================================================
-function togglePublishMenu() {
-    document.getElementById('publishMenu').classList.toggle('hidden');
+function toggleMenu(menu, otherMenu) {
+    const willShow = menu.classList.contains('hidden');
+    if (otherMenu) otherMenu.classList.add('hidden');
+    menu.classList.toggle('hidden', !willShow);
 }
-function hidePublishMenu() {
-    document.getElementById('publishMenu').classList.add('hidden');
+function hidePublishMenu() { els.publishMenu.classList.add('hidden'); }
+function hideMenus() {
+    els.publishMenu.classList.add('hidden');
+    els.deepseekMenu.classList.add('hidden');
 }
 
 // Публикация в Gist: если GIST уже привязан — обновляем его, иначе создаём новый
@@ -640,12 +726,24 @@ async function createNewGist() {
         state.dirty = false;
 
         updateGistLinkDisplay();
-        setStatus('Новый GIST создан');
-        showToast('Новый GIST создан');
+        showPublishedLink('GIST опубликован', buildTaskUrl());
     } catch (e) {
         setStatus('Ошибка создания GIST: ' + e.message);
         showToast('Создание не удалось: ' + e.message, true);
     }
+}
+
+// Ссылка на задание в приложении (открывается по raw-ссылке XML)
+function buildTaskUrl() {
+    if (!state.rawUrl) return state.gistUrl || '';
+    return TASK_APP_BASE_URL + '?file=' + encodeURIComponent(state.rawUrl);
+}
+
+// Показать ссылку на задание после публикации: статус + toast + копирование в буфер
+function showPublishedLink(title, link) {
+    setStatus(`${title}. Ссылка скопирована в буфер обмена`);
+    showToast(`${title}: ${link}`, false);
+    if (link && navigator.clipboard) navigator.clipboard.writeText(link).catch(() => {});
 }
 
 async function saveToGist(opts = {}) {
@@ -672,7 +770,7 @@ async function saveToGist(opts = {}) {
         if (fd && fd.raw_url) state.rawUrl = fd.raw_url;
         state.dirty = false;
         setStatus('Сохранено в GIST в ' + new Date().toLocaleTimeString());
-        if (!opts.silent) showToast('Сохранено в GIST');
+        if (!opts.silent) showPublishedLink('Обновлено в GIST', buildTaskUrl());
     } catch (e) {
         if (String(e.message).toLowerCase().includes('blocked')) {
             setStatus('GIST занят, повторная попытка…');
@@ -749,8 +847,9 @@ async function publishToGitverse(opts = {}) {
         state.gitverseRawUrl = `https://gitverse.ru/${project}/raw/branch/${branch}/${encodeURIComponent(fileName)}`;
         state.lastPublishTarget = 'gitverse';
         state.dirty = false;
-        setStatus('Опубликовано на GitVerse: ' + project);
-        showToast('Опубликовано на GitVerse');
+        // Ссылка на задание: приложение RE:AD открывает XML по raw-ссылке GitVerse
+        const taskLink = TASK_APP_BASE_URL + '?file=' + encodeURIComponent(state.gitverseRawUrl);
+        showPublishedLink('Опубликовано на GitVerse (' + project + ')', taskLink);
     } catch (e) {
         setStatus('Ошибка публикации на GitVerse: ' + e.message);
         showToast('GitVerse: ' + e.message, true);
@@ -871,15 +970,45 @@ async function loadFromGist() {
 }
 
 // ============================================================
-// DeepSeek
+// DeepSeek: два режима — абзацы / предложения.
+// Текст берётся из окна XML, результат возвращается в окно XML.
+// Без токена: копируем текст+промпт и открываем чат DeepSeek.
 // ============================================================
-async function askDeepSeek() {
+const DS_PROMPTS = {
+    paragraphs: 'Работай с XML-заданием ниже в режиме АБЗАЦЕВ: улучши/сгенерируй тексты фрагментов (<text> внутри <fragment>), сохраняя структуру XML, количество и содержимое вопросов неизменными. Ответь ТОЛЬКО готовым XML без пояснений и без markdown.',
+    proposals: 'Работай с XML-заданием ниже в режиме ПРЕДЛОЖЕНИЙ: сгенерируй/улучши вопросы и предложения (question/options/answer) на основе текстов фрагментов, сохраняя структуру XML. Ответь ТОЛЬКО готовым XML без пояснений и без markdown.',
+};
+
+function extractXmlFromText(text) {
+    if (!text) return '';
+    // убираем markdown-обёртки ```xml ... ```
+    const fenced = text.match(/```(?:xml)?\s*([\s\S]*?)```/i);
+    const candidate = fenced ? fenced[1] : text;
+    const start = candidate.indexOf('<readingTest');
+    const end = candidate.lastIndexOf('</readingTest>');
+    if (start !== -1 && end !== -1) return candidate.slice(start, end + '</readingTest>'.length).trim();
+    return candidate.trim();
+}
+
+async function askDeepSeek(mode) {
+    localStorage.setItem(LS.dsMode, mode);
+    hideMenus();
+
     const token = getDeepseekToken();
-    if (!token) return showToast('Укажите DeepSeek Token в настройках (⚙)', true);
+    const xml = els.xmlEditor.value || generateXml();
+    if (!xml.trim()) return showToast('XML пуст', true);
+    const prompt = DS_PROMPTS[mode] || DS_PROMPTS.paragraphs;
 
-    const content = els.xmlEditor.value;
-    if (!content) return showToast('XML пуст', true);
+    // Без токена: копировать текст+промпт в буфер и открыть чат DeepSeek
+    if (!token) {
+        const payload = prompt + '\n\n' + xml;
+        try { await navigator.clipboard.writeText(payload); } catch (e) { /* не критично */ }
+        showToast('XML и промпт скопированы — вставьте их в чат DeepSeek (открыт в новом окне)');
+        openExternal('https://chat.deepseek.com/');
+        return;
+    }
 
+    setStatus('DeepSeek (' + (mode === 'proposals' ? 'режим предложений' : 'режим абзацев') + ')…');
     showToast('Думаю…');
     try {
         const res = await fetch('https://api.deepseek.com/chat/completions', {
@@ -887,7 +1016,7 @@ async function askDeepSeek() {
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({
                 model: 'deepseek-chat',
-                messages: [{ role: 'user', content }],
+                messages: [{ role: 'user', content: prompt + '\n\n' + xml }],
                 stream: false,
             }),
         });
@@ -896,12 +1025,33 @@ async function askDeepSeek() {
 
         const reply = data.choices?.[0]?.message?.content;
         if (!reply) throw new Error('Некорректный ответ модели');
-        els.xmlEditor.value = reply;
-        scheduleAutoSave();
-        showToast('Ответ получен. Проверьте XML.');
+
+        const resultXml = extractXmlFromText(reply);
+        els.xmlEditor.value = resultXml;
+        // Результат сразу применяем к редактору (и он же сохранится на диск при автосохранении)
+        if (parseXmlToData(resultXml)) {
+            state.currentFragmentIndex = 0;
+            renderFragment();
+            updateXmlOutput({ immediate: true, force: true });
+            showToast('Ответ DeepSeek применён к XML и редактору');
+        } else {
+            showToast('Ответ получен, но XML некорректен — проверьте панель XML');
+        }
+        setStatus('DeepSeek: ответ получен');
     } catch (e) {
         console.error(e);
+        setStatus('DeepSeek: ошибка');
         showToast('DeepSeek: ' + e.message, true);
+    }
+}
+
+// Кнопки «Промпт: …» — копируют соответствующий промпт в буфер обмена
+async function copyPrompt(mode) {
+    try {
+        await navigator.clipboard.writeText(DS_PROMPTS[mode]);
+        showToast('Промпт скопирован в буфер обмена');
+    } catch (e) {
+        showToast('Не удалось скопировать промпт', true);
     }
 }
 
