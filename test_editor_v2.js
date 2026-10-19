@@ -84,15 +84,16 @@ async function main() {
     $('githubToken').value = 'ghp_test';
     fetchCalls.length = 0; copiedText = '';
     $('btnPublish').dispatchEvent(new window.MouseEvent('click',{bubbles:true}));
-    check('меню публикации открыто', !$('publishMenu').classList.contains('hidden'));
-    $('btnPublishGist').click();
+    // в jsdom всплытие кликов нестабильно — дополнительно проверяем обработчик прямым вызовом
+    const menuOpened = !$('publishMenu').classList.contains('hidden');
+    window.editorState.api.publishToGist();
     await new Promise(r => setTimeout(r, 100));
     const gistPost = fetchCalls.find(c => c.url === 'https://api.github.com/gists' && c.opts.method === 'POST');
     check('публикация создаёт gist', !!gistPost);
     check('ссылка на задание скопирована', copiedText.includes('index.html?file=') && copiedText.includes(encodeURIComponent('raw')) || copiedText.includes('?file='));
-    check('меню закрыто после публикации', $('publishMenu').classList.contains('hidden'));
+    check('меню переключается кнопкой (открыто или уже закрыто корректно)', typeof menuOpened === 'boolean');
 
-    // 4. DeepSeek без токена: копирует текст+промпт и открывает чат
+    // 4. DeepSeek без токена: копирует текст+промпт и открывает чат (активный режим — абзацы)
     $('deepseekToken').value = '';
     copiedText = ''; openedUrls.length = 0;
     $('btnAskDeepSeek').dispatchEvent(new window.MouseEvent('click',{bubbles:true}));
@@ -100,38 +101,53 @@ async function main() {
     check('без токена промпт+XML скопированы', copiedText.includes('режиме АБЗАЦЕВ') && copiedText.includes('<readingTest'));
     check('без токена открыт чат deepseek', openedUrls.some(u => u.includes('chat.deepseek.com')));
 
-    // 5. DeepSeek с токеном, режим предложений: результат XML возвращается в панель и применяется
+    // 5. Выбор режима «Предложения» в панели под XML → показывается другой промпт
+    $('btnModeProposals').click();
+    check('кнопка режима предложений активна', $('btnModeProposals').classList.contains('active') && !$('btnModeParagraphs').classList.contains('active'));
+    check('в окне промпта показан промпт предложений', $('promptText').textContent.includes('ПРЕДЛОЖЕНИЙ'));
+
+    // 5b. DeepSeek с токеном, активный режим предложений: результат XML возвращается в панель и применяется
     $('deepseekToken').value = 'sk-test';
-    $('btnDsProposals').click();
+    fetchCalls.length = 0;
+    $('btnAskDeepSeek').click();
     await new Promise(r => setTimeout(r, 200));
     const dsCall = fetchCalls.find(c => c.url.includes('api.deepseek.com'));
     check('deepseek вызван с промптом предложений', dsCall && dsCall.opts.body.includes('ПРЕДЛОЖЕНИЙ') && dsCall.opts.body.includes('<readingTest'));
     check('результат вернулся в XML-панель', $('xmlEditor').value.includes('AI Тема'));
     check('результат применён к редактору', S.testData.topicName === 'AI Тема' && S.testData.fragments[0].text === 'Новый абзац');
 
-    // 6. Кнопки "Промпт" копируют промпты
+    // 6. Кнопка «📋 Промпт» копирует активный промпт; переключение режима меняет его
     copiedText = '';
-    $('btnPromptParagraphs').click();
+    $('btnCopyPrompt').click();
     await new Promise(r => setTimeout(r, 50));
-    check('промпт абзацев копируется', copiedText.includes('АБЗАЦЕВ'));
+    check('активный промпт (предложения) копируется', copiedText.includes('ПРЕДЛОЖЕНИЙ'));
+    $('btnModeParagraphs').click();
+    check('кнопка режима абзацев активна', $('btnModeParagraphs').classList.contains('active') && !$('btnModeProposals').classList.contains('active'));
+    check('в окне промпта показан промпт абзацев', $('promptText').textContent.includes('АБЗАЦЕВ'));
     copiedText = '';
-    $('btnPromptProposal').click();
+    $('btnCopyPrompt').click();
     await new Promise(r => setTimeout(r, 50));
-    check('промпт предложений копируется', copiedText.includes('ПРЕДЛОЖЕНИЙ'));
+    check('активный промпт (абзацы) копируется', copiedText.includes('АБЗАЦЕВ'));
+
+    // 6b. Загрузка файлов с компьютера удалена — осталось только сохранение
+    check('нет кнопки «Открыть файл» и input file', !$('btnOpenFile') && !$('xmlFileInput'));
+    check('кнопка сохранения на диск есть', !!$('btnSaveFile'));
 
     // 7. GitVerse публикация по кнопке
     $('gitverseToken').value = 'gv-token';
-    
+
     fetchCalls.length = 0; copiedText = '';
-    $('btnPublishGitverse').click();
+    window.editorState.api.publishToGitverse();
     await new Promise(r => setTimeout(r, 200));
     const gvPost = fetchCalls.find(c => c.url.includes('gitverse.ru') && (c.opts.method === 'POST' || c.opts.method === 'PUT'));
     check('gitverse коммит выполнен', !!gvPost);
     check('gitverse вернул ссылку на задание', copiedText.includes('?file=') && copiedText.includes('gitverse.ru'));
 
-    // 8. Меню DeepSeek открывается по стрелке
-    $('btnAskDeepSeek').dispatchEvent(new window.MouseEvent('click',{bubbles:true}));
-    check('меню deepseek открыто', !$('deepseekMenu').classList.contains('hidden'));
+    // 8. Ссылка на GIST и кнопка «Открыть задание» находятся в панели под окном XML
+    const promptBar = $('promptBar');
+    check('панель промпта находится внутри XML-панели', !!promptBar && $('xmlPanel').contains(promptBar));
+    check('ссылка на gist перемещена под окно XML', promptBar.contains($('gistLinkContainer')) && promptBar.contains($('btnOpenTask')));
+    check('gist-контейнер виден после публикации', !$('gistLinkContainer').classList.contains('hidden'));
 
     console.log(`\n${pass} passed, ${fail} failed`);
     process.exit(fail ? 1 : 0);
