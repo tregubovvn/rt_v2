@@ -483,3 +483,11 @@ body {
     .toolbar { width: 100%; }
     .topic-inline { max-width: none; }
 }
+
+/* ===== Меню DeepSeek (аналогично меню публикации) ===== */
+#btnAskDeepSeek { position: relative; }
+.btn-group:has(#deepseekMenu) { position: relative; }
+#deepseekMenu {
+    left: auto;
+    right: 0;
+}
