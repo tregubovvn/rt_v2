@@ -12,10 +12,6 @@
     <header class="topbar">
         <div class="brand">
             <h1>Reading Test Editor</h1>
-            <span class="topic-inline">
-                <label class="label" for="topicName">Тема:</label>
-                <input type="text" id="topicName" class="input-base input-sm" placeholder="Название темы…">
-            </span>
         </div>
 
         <nav class="toolbar" aria-label="Панель действий">
@@ -38,12 +34,8 @@
                 </div>
             </div>
 
-            <div class="btn-group" role="group" aria-label="AI и справочное">
-                <button type="button" class="btn btn-ai" id="btnAskDeepSeek" title="Отправить XML из панели в DeepSeek (активный режим)">✨ Отправить в DeepSeek</button>
-            </div>
-
             <div class="btn-group" role="group" aria-label="Настройки">
-                <button type="button" class="btn btn-settings" id="btnSettings" title="Токены, автосохранение, автор, университет, аудитория">⚙ Настройки</button>
+                <button type="button" class="btn btn-settings" id="btnSettings" title="Токены и автосохранение">⚙ Настройки</button>
             </div>
         </nav>
     </header>
@@ -55,12 +47,13 @@
                 <span>XML</span>
                 <div class="flex-gap">
                     <button type="button" class="btn btn-sm" id="btnCopyXml" title="Копировать XML в буфер обмена">Копировать</button>
+                    <button type="button" class="btn btn-sm btn-ai" id="btnAskDeepSeek" title="Отправить XML из этого окна в DeepSeek (активный режим)">✨ DeepSeek</button>
                     <button type="button" class="btn btn-sm btn-primary" id="btnApplyXml" title="Применить внесённые в XML изменения к редактору">Применить ▶</button>
                 </div>
             </div>
             <textarea id="xmlEditor" class="xml-textarea" spellcheck="false"></textarea>
 
-            <!-- Панель промпта: режим DeepSeek + активный промпт + ссылка на GIST -->
+            <!-- Панель промпта: режим DeepSeek + редактируемый активный промпт + ссылки -->
             <div class="prompt-bar" id="promptBar">
                 <div class="prompt-mode-row">
                     <span class="prompt-mode-label">Режим DeepSeek:</span>
@@ -69,17 +62,19 @@
                         <button type="button" class="mode-btn" id="btnModeParagraphs" role="radio" aria-checked="true">Абзацы</button>
                     </div>
                     <button type="button" class="btn btn-sm btn-ghost" id="btnCopyPrompt" title="Скопировать активный промпт">📋 Промпт</button>
-                    <a class="prompt-gist-link" id="promptGistLink" href="#" target="_blank" rel="noopener" title="Открыть промпт на GitHub Gist"></a>
-                    <span class="prompt-spacer"></span>
-                    <span id="gistLinkContainer" class="raw-url-display hidden">
-                        <a id="gistLinkText" class="url-text" href="#" target="_blank" rel="noopener" title="Открыть GIST"></a>
-                        <button type="button" class="btn-icon" id="btnCopyGistUrl" title="Скопировать ссылку на задание">
-                            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-                        </button>
-                        <button type="button" class="btn btn-sm" id="btnOpenTask" title="Открыть задание и скопировать ссылку">Открыть задание</button>
-                    </span>
+                    <button type="button" class="btn btn-sm btn-ghost" id="btnReloadPrompt" title="Перезагрузить промпт с GitHub Gist (отменит правки)">↻ Gist</button>
+                    <a class="prompt-gist-link" id="promptGistLink" href="#" target="_blank" rel="noopener" title="Открыть промпт на GitHub Gist">Промпт на Gist ↗</a>
                 </div>
-                <pre class="prompt-text" id="promptText" title="Активный промпт для отправки в DeepSeek"></pre>
+                <textarea class="prompt-text prompt-editable" id="promptText" spellcheck="false"
+                    title="Активный промпт — можно редактировать; изменения сохраняются в браузере"></textarea>
+                <div class="prompt-task-row" id="taskLinkRow">
+                    <span class="prompt-task-label">Задание:</span>
+                    <a id="gistLinkText" class="url-text" href="#" target="_blank" rel="noopener" title="Открыть страницу задания">—</a>
+                    <button type="button" class="btn-icon" id="btnCopyGistUrl" title="Скопировать ссылку на задание">
+                        <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                    </button>
+                    <button type="button" class="btn btn-sm" id="btnOpenTask" title="Открыть задание в приложении RE:AD и скопировать ссылку">Открыть задание</button>
+                </div>
             </div>
         </aside>
 
@@ -87,6 +82,19 @@
 
         <section class="editor-scroll-container" id="editorContainer">
             <div class="center-container">
+                <!-- Тема теста + метаданные + ссылка на задание (над навигацией по фрагментам) -->
+                <div class="topic-row">
+                    <input type="text" id="topicName" class="input-base topic-input" placeholder="Тема теста…">
+                    <button type="button" class="btn btn-sm" id="btnMeta" title="Метаданные теста: автор, университет, дисциплина, аудитория">👤 Метаданные теста</button>
+                    <span class="task-link-inline hidden" id="gistLinkContainer">
+                        <a id="publishedTaskLink" class="url-text url-sm" href="#" target="_blank" rel="noopener" title="Ссылка на опубликованное задание">—</a>
+                        <button type="button" class="btn-icon" id="btnCopyTaskUrl" title="Скопировать ссылку на задание">
+                            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                        </button>
+                        <button type="button" class="btn btn-sm" id="btnOpenTaskTop" title="Открыть задание в приложении RE:AD">Открыть задание</button>
+                    </span>
+                </div>
+
                 <!-- Навигация по фрагментам -->
                 <div class="nav-bar">
                     <button type="button" id="prevBtn" class="nav-btn" disabled>← Предыдущий</button>
@@ -150,29 +158,6 @@
 
             <div class="modal-body">
                 <section class="settings-section">
-                    <h4>Метаданные теста</h4>
-                    <div class="settings-grid">
-                        <div>
-                            <label class="label" for="author">Автор теста</label>
-                            <input type="text" id="author" class="input-base" placeholder="И.О. Фамилия">
-                        </div>
-                        <div>
-                            <label class="label" for="university">Университет</label>
-                            <input type="text" id="university" class="input-base" placeholder="Например: МГТУ им. Н.Э. Баумана">
-                        </div>
-                        <div>
-                            <label class="label" for="discipline">Дисциплина</label>
-                            <input type="text" id="discipline" class="input-base" placeholder="Например: Программная инженерия">
-                        </div>
-                        <div class="span-2">
-                            <label class="label" for="audience">Целевая аудитория</label>
-                            <input type="text" id="audience" class="input-base" placeholder="Например: студенты 2 курса, направление 09.03.04">
-                        </div>
-                    </div>
-                    <p class="hint">Поля попадают в XML как <code>&lt;author&gt;</code>, <code>&lt;university&gt;</code>, <code>&lt;discipline&gt;</code>, <code>&lt;targetAudience&gt;</code>.</p>
-                </section>
-
-                <section class="settings-section">
                     <h4>Токены сервисов</h4>
                     <div class="token-row">
                         <label class="label" for="githubToken">GitHub Token (для Gist)</label>
@@ -222,6 +207,42 @@
 
             <div class="modal-footer">
                 <button type="button" class="btn btn-primary" id="btnSettingsDone">Готово</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== Модальное окно: метаданные данного теста ===== -->
+    <div class="modal-overlay" id="metaModal" role="dialog" aria-modal="true" aria-labelledby="metaTitle">
+        <div class="modal modal-wide">
+            <div class="modal-header">
+                <h3 id="metaTitle">Метаданные теста</h3>
+                <button type="button" class="btn-icon" id="btnMetaClose" aria-label="Закрыть метаданные">✕</button>
+            </div>
+            <div class="modal-body">
+                <section class="settings-section">
+                    <div class="settings-grid">
+                        <div>
+                            <label class="label" for="author">Автор теста</label>
+                            <input type="text" id="author" class="input-base" placeholder="И.О. Фамилия">
+                        </div>
+                        <div>
+                            <label class="label" for="university">Университет</label>
+                            <input type="text" id="university" class="input-base" placeholder="Например: МГТУ им. Н.Э. Баумана">
+                        </div>
+                        <div>
+                            <label class="label" for="discipline">Дисциплина</label>
+                            <input type="text" id="discipline" class="input-base" placeholder="Например: Программная инженерия">
+                        </div>
+                        <div>
+                            <label class="label" for="audience">Целевая аудитория</label>
+                            <input type="text" id="audience" class="input-base" placeholder="Например: студенты 2 курса, направление 09.03.04">
+                        </div>
+                    </div>
+                    <p class="hint">Поля попадают в XML как <code>&lt;author&gt;</code>, <code>&lt;university&gt;</code>, <code>&lt;discipline&gt;</code>, <code>&lt;targetAudience&gt;</code>. Значения относятся к данному тесту и подставляются как шаблон для новых.</p>
+                </section>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" id="btnMetaDone">Готово</button>
             </div>
         </div>
     </div>

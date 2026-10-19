@@ -19,8 +19,9 @@ const LS = {
     dsToken: 'ds_token',
     gvToken: 'gv_token',
     autoSave: 'editor_autosave_enabled',
-    meta: 'editor_meta_json',          // author / university / discipline / audience
+    meta: 'editor_meta_json',          // author / university / discipline / audience (шаблон)
     dsMode: 'editor_deepseek_mode',    // paragraphs | proposals
+    promptEdits: 'editor_ds_prompt_edits',   // отредактированные пользователем промпты
 };
 
 // --- Состояние ---
@@ -66,6 +67,7 @@ document.addEventListener('DOMContentLoaded', () => {
     Object.assign(window.editorState.api, {
         publishToGist, publishToGitverse, saveToFile, askDeepSeek, setDsMode, currentDsMode,
         generateXml, parseXmlToData, loadPromptsFromGists, buildDsPrompt, PROMPT_GIST_URLS,
+        openTask, copyTaskUrl, showMetaModal, hideMetaModal, reloadActivePromptFromGist, savePromptEdit,
     });
     loadPromptsFromGists();   // подгружаем тексты промптов с GitHub Gist
 });
@@ -76,11 +78,11 @@ function cacheElements() {
         'xmlEditor', 'xmlPanel', 'resizer', 'editorContainer',
         'fragmentCard', 'fragmentNumber', 'timeExcellent', 'timeGood', 'fragmentText',
         'questionsContainer', 'fragmentTabs', 'prevBtn', 'nextBtn',
-        'statusText', 'toast', 'gistLinkContainer', 'gistLinkText',
-        'loadModal', 'loadGistId', 'settingsModal',
+        'statusText', 'toast', 'gistLinkContainer', 'publishedTaskLink',
+        'loadModal', 'loadGistId', 'settingsModal', 'metaModal',
         'autoSaveToggle', 'saveInterval', 'autoSaveFolderName',
         'publishMenu', 'promptBar', 'promptText',
-        'btnModeProposals', 'btnModeParagraphs', 'btnCopyPrompt',
+        'btnModeProposals', 'btnModeParagraphs', 'btnCopyPrompt', 'btnReloadPrompt',
     ];
     els = {};
     ids.forEach(id => { els[id] = document.getElementById(id); });
@@ -94,17 +96,29 @@ function bindEvents() {
     on('btnSaveFile', 'click', saveToFile);
     on('btnPublish', 'click', (e) => { e.stopPropagation(); toggleMenu(els.publishMenu, null); });
     on('btnSettings', 'click', showSettingsModal);
-    on('btnCopyGistUrl', 'click', copyGistUrl);
-    on('btnOpenTask', 'click', openTask);
     on('btnCopyXml', 'click', copyXml);
     on('btnApplyXml', 'click', applyXmlChanges);
     on('btnAskDeepSeek', 'click', () => askDeepSeek(currentDsMode()));
     on('btnPickAutoSaveFile', 'click', pickAutoSaveFile);
 
-    // Панель промпта под окном XML: выбор режима и копирование активного промпта
+    // Ссылка на задание: в панели промпта (под XML) и в строке темы (над навигацией)
+    on('btnCopyGistUrl', 'click', copyTaskUrl);
+    on('btnOpenTask', 'click', openTask);
+    on('btnCopyTaskUrl', 'click', copyTaskUrl);
+    on('btnOpenTaskTop', 'click', openTask);
+
+    // Метаданные данного теста — отдельное окно (кнопка в строке темы)
+    on('btnMeta', 'click', showMetaModal);
+    on('btnMetaClose', 'click', hideMetaModal);
+    on('btnMetaDone', 'click', hideMetaModal);
+    els.metaModal.addEventListener('click', (e) => { if (e.target === els.metaModal) hideMetaModal(); });
+
+    // Панель промпта под окном XML: выбор режима, копирование/редактирование промпта
     els.btnModeProposals.addEventListener('click', () => setDsMode('proposals'));
     els.btnModeParagraphs.addEventListener('click', () => setDsMode('paragraphs'));
     on('btnCopyPrompt', 'click', () => copyPrompt(currentDsMode()));
+    on('btnReloadPrompt', 'click', reloadActivePromptFromGist);
+    els.promptText.addEventListener('input', savePromptEdit);
 
     // Редактор фрагмента
     els.timeExcellent.addEventListener('input', updateFragmentFromInputs);
@@ -128,15 +142,17 @@ function bindEvents() {
     on('btnSettingsDone', 'click', hideSettingsModal);
     els.settingsModal.addEventListener('click', (e) => { if (e.target === els.settingsModal) hideSettingsModal(); });
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') { hideLoadModal(); hideSettingsModal(); hidePublishMenu(); }
+        if (e.key === 'Escape') { hideLoadModal(); hideSettingsModal(); hideMetaModal(); hidePublishMenu(); }
     });
 
-    // Поля настроек
+    // Поля настроек (токены, автосохранение)
     ['githubToken', 'deepseekToken', 'gitverseToken'].forEach(id => {
         document.getElementById(id).addEventListener('change', saveSettings);
     });
     els.autoSaveToggle.addEventListener('change', () => { saveSettings(); setStatus(autoSaveEnabled() ? 'Автосохранение включено' : 'Автосохранение выключено'); });
     els.saveInterval.addEventListener('change', saveSettings);
+
+    // Поля метаданных теста (окно «Метаданные теста»)
     ['author', 'university', 'discipline', 'audience'].forEach(id => {
         els[id].addEventListener('input', () => { readMetaFromSettingsInputs(); updateXmlOutput(); });
     });
@@ -210,15 +226,49 @@ function setDsMode(mode) {
     renderModeSwitch();
 }
 
-// Подсветка активного режима и показ текста промпта в панели под окном XML
+// Подсветка активного режима и показ (редактируемого) текста промпта под окном XML
 function renderModeSwitch() {
     const mode = currentDsMode();
     els.btnModeProposals.classList.toggle('active', mode === 'proposals');
     els.btnModeParagraphs.classList.toggle('active', mode === 'paragraphs');
     els.btnModeProposals.setAttribute('aria-checked', String(mode === 'proposals'));
     els.btnModeParagraphs.setAttribute('aria-checked', String(mode === 'paragraphs'));
-    els.promptText.textContent = state.dsPrompts[mode] || state.dsPrompts.paragraphs;
+    // Не трогаем поле, пока пользователь его редактирует (фокус в textarea)
+    if (document.activeElement !== els.promptText) {
+        els.promptText.value = state.dsPrompts[mode] || state.dsPrompts.paragraphs;
+    }
     updatePromptGistLink(mode);
+}
+
+// Сохранение отредактированного пользователем промпта (для активного режима)
+function savePromptEdit() {
+    const mode = currentDsMode();
+    state.dsPrompts[mode] = els.promptText.value;
+    try {
+        const edits = JSON.parse(localStorage.getItem(LS.promptEdits) || '{}');
+        edits[mode] = els.promptText.value;
+        localStorage.setItem(LS.promptEdits, JSON.stringify(edits));
+    } catch (e) { /* повреждённые данные — пропускаем */ }
+}
+
+// Кнопка «↻ Gist» — перезагрузить активный промпт с GitHub Gist (отменяет правки)
+async function reloadActivePromptFromGist() {
+    const mode = currentDsMode();
+    try {
+        setStatus('Загрузка промпта с Gist…');
+        const text = await fetchGistRaw(PROMPT_GIST_URLS[mode]);
+        if (!text.trim()) throw new Error('Пустой файл промпта');
+        state.dsPrompts[mode] = text.trim();
+        const edits = JSON.parse(localStorage.getItem(LS.promptEdits) || '{}');
+        delete edits[mode];
+        localStorage.setItem(LS.promptEdits, JSON.stringify(edits));
+        els.promptText.value = state.dsPrompts[mode];
+        setStatus('Промпт загружен с Gist');
+        showToast('Промпт обновлён из Gist (правки отменены)');
+    } catch (e) {
+        setStatus('Не удалось загрузить промпт: ' + e.message);
+        showToast('Загрузка промпта не удалась: ' + e.message, true);
+    }
 }
 
 // Ссылка на Gist с активным промптом (рядом с текстом промпта, под окном XML)
@@ -712,14 +762,35 @@ function publishToGist() {
 
 function openExternal(url) { window.open(url, '_blank', 'noopener'); }
 
+// Ссылка на опубликованное задание — показывается в двух местах:
+// 1) в строке темы (над кнопками Предыдущий/Следующий), 2) в панели промпта под окном XML
 function updateGistLinkDisplay() {
-    if (!state.gistUrl) {
+    const link = buildTaskUrl();
+    // Строка темы
+    if (link) {
+        els.publishedTaskLink.href = link;
+        els.publishedTaskLink.textContent = link;
+        els.gistLinkContainer.classList.remove('hidden');
+    } else {
         els.gistLinkContainer.classList.add('hidden');
-        return;
     }
-    els.gistLinkText.href = state.gistUrl;
-    els.gistLinkText.textContent = state.gistUrl;
-    els.gistLinkContainer.classList.remove('hidden');
+    // Панель промпта (ссылка на GIST-страницу задания)
+    const promptLink = document.getElementById('gistLinkText');
+    if (promptLink) {
+        const pageUrl = state.lastPublishTarget === 'gitverse'
+            ? `https://gitverse.ru/${state.gitverseProject || ''}`
+            : (state.gistUrl || '');
+        promptLink.href = pageUrl || '#';
+        promptLink.textContent = pageUrl || 'не опубликовано';
+    }
+}
+
+// Копирование ссылки на задание (кнопки рядом со ссылкой)
+function copyTaskUrl() {
+    const link = buildTaskUrl();
+    if (!link) return showToast('Задание ещё не опубликовано', true);
+    navigator.clipboard.writeText(link);
+    showToast('Ссылка на задание скопирована');
 }
 
 async function createNewGist() {
@@ -755,8 +826,11 @@ async function createNewGist() {
     }
 }
 
-// Ссылка на задание в приложении (открывается по raw-ссылке XML)
+// Ссылка на задание в приложении (открывается по raw-ссылке XML; Gist или GitVerse)
 function buildTaskUrl() {
+    if (state.lastPublishTarget === 'gitverse' && state.gitverseRawUrl) {
+        return TASK_APP_BASE_URL + '?file=' + encodeURIComponent(state.gitverseRawUrl);
+    }
     if (!state.rawUrl) return state.gistUrl || '';
     return TASK_APP_BASE_URL + '?file=' + encodeURIComponent(state.rawUrl);
 }
@@ -872,6 +946,7 @@ async function publishToGitverse(opts = {}) {
         state.gitverseRawUrl = `https://gitverse.ru/${project}/raw/branch/${branch}/${encodeURIComponent(fileName)}`;
         state.lastPublishTarget = 'gitverse';
         state.dirty = false;
+        updateGistLinkDisplay();
         // Ссылка на задание: приложение RE:AD открывает XML по raw-ссылке GitVerse
         const taskLink = TASK_APP_BASE_URL + '?file=' + encodeURIComponent(state.gitverseRawUrl);
         showPublishedLink('Опубликовано на GitVerse (' + project + ')', taskLink);
@@ -896,22 +971,24 @@ async function describeHttpError(res) {
     return `HTTP ${res.status}${detail ? ': ' + detail : ''}`;
 }
 
-function copyGistUrl() {
-    if (!state.gistUrl) return showToast('GIST ещё не создан', true);
-    navigator.clipboard.writeText(state.gistUrl);
-    showToast('Ссылка на GIST скопирована');
-}
-
 async function openTask() {
-    if (!state.gistId) return showToast('Сначала создайте или загрузите GIST', true);
+    // Если GIST не привязан, но есть GitVerse-публикация — открываем ссылку на задание
+    if (!state.gistId && state.gitverseRawUrl) {
+        const taskUrl = TASK_APP_BASE_URL + '?file=' + encodeURIComponent(state.gitverseRawUrl);
+        navigator.clipboard.writeText(taskUrl).catch(() => {});
+        openExternal(taskUrl);
+        showToast('Ссылка на задание скопирована и открыта');
+        return;
+    }
+    if (!state.gistId) return showToast('Сначала опубликуйте задание (Gist или GitVerse)', true);
 
-    copyGistUrl();
+    copyTaskUrl();
     const win = window.open('about:blank', '_blank');
     try {
         if (state.autoSaveTimeout || state.dirty) {
             clearTimeout(state.autoSaveTimeout);
             state.autoSaveTimeout = null;
-            await saveToGist();
+            await saveToGist({ silent: true });
         }
     } catch (e) { /* продолжаем даже при ошибке сохранения */ }
 
@@ -920,7 +997,7 @@ async function openTask() {
         return showToast('Raw-ссылка недоступна', true);
     }
 
-    const taskUrl = TASK_APP_BASE_URL + '?file=' + encodeURIComponent(state.rawUrl);
+    const taskUrl = buildTaskUrl();
     navigator.clipboard.writeText(taskUrl);
     if (win) { win.opener = null; win.location.href = taskUrl; }
     else { window.open(taskUrl, '_blank'); }
@@ -1041,9 +1118,12 @@ async function fetchGistRaw(url) {
     return await rawRes.text();
 }
 
-// Загрузка обоих промптов из Gist; при сетевой ошибке оставляем резервные тексты
+// Загрузка обоих промптов из Gist; при сетевой ошибке оставляем резервные тексты.
+// Пользовательские правки (promptEdits) имеют приоритет над текстом с Gist.
 async function loadPromptsFromGists() {
     setStatus('Загрузка промптов с GitHub Gist…');
+    let edits = {};
+    try { edits = JSON.parse(localStorage.getItem(LS.promptEdits) || '{}'); } catch (e) { edits = {}; }
     let loaded = 0, failed = 0;
     for (const mode of ['paragraphs', 'proposals']) {
         try {
@@ -1052,6 +1132,9 @@ async function loadPromptsFromGists() {
         } catch (e) {
             console.warn('Не удалось загрузить промпт (' + mode + '):', e);
             failed++;
+        }
+        if (typeof edits[mode] === 'string' && edits[mode].trim()) {
+            state.dsPrompts[mode] = edits[mode];   // восстановленная пользовательская версия
         }
     }
     renderModeSwitch();
@@ -1179,6 +1262,8 @@ function showLoadModal() { els.loadModal.classList.add('show'); els.loadGistId.f
 function hideLoadModal() { els.loadModal.classList.remove('show'); }
 function showSettingsModal() { els.settingsModal.classList.add('show'); }
 function hideSettingsModal() { els.settingsModal.classList.remove('show'); saveSettings(); }
+function showMetaModal() { els.metaModal.classList.add('show'); els.author.focus(); }
+function hideMetaModal() { els.metaModal.classList.remove('show'); readMetaFromSettingsInputs(); updateXmlOutput(); }
 
 // ============================================================
 // Resizer для XML-панели (тянем за правую границу — меняем ширину)
