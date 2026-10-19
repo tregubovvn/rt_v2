@@ -12,16 +12,8 @@ const MAX_QUIZ_ERRORS = 2;          // ошибки в фрагменте до �
 const NEXT_QUESTION_DELAY = 800;    // мс, пауза после верного ответа (промежуточный тест)
 const FINAL_NEXT_DELAY = 1200;      // мс, пауза перед следующим вопросом финального теста
 const WRONG_ANSWER_RESET_DELAY = 1000; // мс, сброс подсветки неверного ответа
-const TEACHER_PAGE_URL = 'https://tregubovvn.github.io/rt/right_answer/index.html';
+const TEACHER_PAGE_URL = 'https://tregubovvn.github.io/rt_v2/right_answer/index.html';
 const PASS_RATIO = 0.7;             // доля правильных ответов для оценки не ниже «3»
-
-// Оценивание по числу ошибок в финальном тесте: [мин. ошибок, оценка]
-const GRADE_SCALE = [
-    { minErrors: 10, grade: 2 },
-    { minErrors: 6, grade: 3 },
-    { minErrors: 4, grade: 4 },
-    { minErrors: 0, grade: 5 }
-];
 
 // --- Состояние приложения ---
 const state = {
@@ -276,12 +268,16 @@ function renderQuestion() {
     el['content-area'].innerHTML = html;
     el['controls-area'].innerHTML =
         '<div class="feedback-msg" id="fb"></div>' +
-        '<button class="btn" id="submit-btn">Ответить</button>';
+        '<div class="controls-row">' +
+        '<button class="btn" id="submit-btn">Ответить</button>' +
+        '<button class="btn btn-finish-inline" id="btn-finish-inline" type="button" title="Завершить тест и перейти к результатам">Завершить тест</button>' +
+        '</div>';
 
     el['content-area'].querySelectorAll('.option-item').forEach((item) => {
         item.addEventListener('click', () => selectOption(item));
     });
     document.getElementById('submit-btn').addEventListener('click', submitAnswer);
+    document.getElementById('btn-finish-inline').addEventListener('click', requestFinishTest);
 }
 
 /** Все вопросы пройдены: переход к следующему фрагменту или финальному тесту. */
@@ -511,7 +507,6 @@ function finishTest() {
 
 /** Кнопка «Завершить тест»: немедленный переход к окну результатов. */
 function requestFinishTest() {
-    if (!confirm('Завершить тест и перейти к результатам?')) return;
     finishTest();
 }
 
@@ -557,6 +552,8 @@ document.addEventListener('DOMContentLoaded', () => {
     el['btn-start'].addEventListener('click', startTest);
     el['btn-skip'].addEventListener('click', startFinalTestDirectly);
     el['btn-teacher'].addEventListener('click', redirectToTeacherPage);
+    // «Завершить тест» — работает на любом экране режима прохождения (рядом с «Ответить» дублируется в зоне управления)
+    el['btn-finish'].addEventListener('click', requestFinishTest);
 
     initFromUrl();
 });
