@@ -33,18 +33,16 @@ const state = {
     gistUrl: null,
     rawUrl: null,
     gistFilename: GIST_FILENAME,
-    // Активные промпты DeepSeek (по режимам). Резервные тексты на случай,
-    // если загрузка с GitHub Gist не удалась; затем перезаписываются Gist-промптами.
-    dsPrompts: {
-        paragraphs: 'Работай с XML-заданием ниже в режиме АБЗАЦЕВ: улучши/сгенерируй тексты фрагментов (<text> внутри <fragment>), сохраняя структуру XML, количество и содержимое вопросов неизменными.',
-        proposals: 'Работай с XML-заданием ниже в режиме ПРЕДЛОЖЕНИЙ: проверь/улучши вопросы и предложения (question/options/answer) на основе текстов фрагментов, сохраняя структуру XML.',
-    },
+    // Активные промпты DeepSeek (по режимам). Тексты загружаются ТОЛЬКО
+    // из GitHub Gist (см. PROMPT_GIST_URLS); до загрузки — пустые строки.
+    dsPrompts: { paragraphs: '', proposals: '' },
     dirty: false,               // есть несохранённые изменения в задании
     isSaving: false,
     needsAnotherSave: false,
     syncTimeout: null,
     autoSaveTimeout: null,
-    fileHandle: null,           // FileSystemFileHandle для автосохранения на диск
+    fileHandle: null,           // FileSystemFileHandle выбранного файла на диске
+    aiBusy: false,              // идёт запрос к DeepSeek (интерфейс заблокирован)
 };
 
 // Флаг «изменение идёт из XML-панели» — XML-поле само является источником данных,
@@ -428,8 +426,15 @@ function markTaskChanged() {
 
 function scheduleAutoSave() {
     if (!autoSaveEnabled()) {
-        // Автосохранение выключено — предлагаем сохранить файл вручную (один раз за сессию правок)
+        // Автосохранение выключено — предлагаем сохранить файл вручную
         showSaveHint(true);
+        return;
+    }
+    if (!state.fileHandle) {
+        // Файл на диске ещё не выбран — НЕ скачиваем молча новые файлы
+        // (это выглядело как «загрузка файла»). Просим выбрать файл один раз.
+        showSaveHint(true);
+        setStatus('Автосохранение: нажмите «💾 Сохранить в файл» и выберите файл на диске — изменения будут записываться в него автоматически');
         return;
     }
     setStatus('Автосохранение на диск…');
@@ -449,7 +454,7 @@ function showSaveHint(show) {
     }
 }
 
-// Автосохранение выполняется ТОЛЬКО на диск компьютера (в выбранный файл).
+// Автосохранение выполняется ТОЛЬКО в выбранный файл на диске (File System Access API).
 // Публикация на сервисы — только по кнопке «Публикация».
 async function autoSaveToDisk() {
     const content = els.xmlEditor.value || generateXml();
@@ -461,10 +466,11 @@ async function autoSaveToDisk() {
             setStatus('Автосохранено на диск: ' + state.fileHandle.name + ' в ' + new Date().toLocaleTimeString());
             return;
         }
-        // Файл для автосохранения не выбран — обычное скачивание браузера
-        downloadBlob(content, suggestedFileName(), 'Файл сохранён на диск (скачан): ');
-        state.dirty = false;
-        showSaveHint(false);
+        // Доступ к файлу потерян (например, после перезагрузки страницы) —
+        // просим выбрать файл заново, ничего без спроса не скачиваем.
+        state.fileHandle = null;
+        showSaveHint(true);
+        setStatus('Автосохранение приостановлено: выберите файл через «💾 Сохранить в файл»');
     } catch (e) {
         setStatus('Ошибка автосохранения на диск: ' + e.message);
         showToast('Автосохранение: ' + e.message, true);
@@ -684,19 +690,39 @@ function addQuestion(type) {
     updateXmlOutput();
 }
 
+// «Применить ▶»: XML -> редактор. После применения спрашиваем, в какой файл
+// на диске сохранить задание (через стандартный диалог сохранения), и дальше
+// работаем с этим файлом (в т.ч. автосохранение пишет в него).
 function applyXmlChanges() {
     applyingXmlToEditor = true;
+    let applied = false;
     try {
-        if (parseXmlToData(els.xmlEditor.value)) {
-            state.currentFragmentIndex = 0;
-            renderFragment();
-            // Информация из XML применена — предлагаем сохранить файл на диск
-            markTaskChanged();
-            showToast('XML применён. Не забудьте сохранить файл: «💾 Сохранить в файл»');
-        }
+        applied = parseXmlToData(els.xmlEditor.value);
     } finally {
         applyingXmlToEditor = false;
     }
+    if (!applied) return;
+    state.currentFragmentIndex = 0;
+    renderFragment();
+    // Информация из XML применена — изменения есть, предлагаем сохранить
+    markTaskChanged();
+    showToast('XML применён к редактору');
+    confirmSaveAfterApply();
+}
+
+// Диалог «Сохранить применённое XML-задание в файл?» со стандартным выбором файла.
+// Важно: window.confirm блокирует поток, поэтому showSaveFilePicker вызываем
+// асинхронно (Promise + setTimeout) — иначе браузер отклоняет диалог как
+// не инициированный пользователем.
+function confirmSaveAfterApply() {
+    Promise.resolve().then(() => {
+        const ok = window.confirm('Информация из XML применена.\n\nСохранить задание в файл на диске?');
+        if (!ok) {
+            setStatus('Задание изменено, но не сохранено — нажмите «💾 Сохранить в файл», когда будете готовы');
+            return;
+        }
+        setTimeout(() => saveToFile(), 0);   // покажет диалог выбора файла (или запишет в уже выбранный)
+    });
 }
 
 function copyXml() {
@@ -719,18 +745,21 @@ async function saveToFile() {
     const content = els.xmlEditor.value || generateXml();
     const fileName = suggestedFileName();
 
-    // Если файл для автосохранения уже выбран — пишем прямо в него
+    // Если файл на диске уже выбран — пишем прямо в него (стандартный механизм
+    // File System Access API, без повторных диалогов)
     if (state.fileHandle && await ensureFilePermission(state.fileHandle)) {
         try {
             await writeFileHandle(state.fileHandle, content);
             state.dirty = false;
+            showSaveHint(false);
             setStatus('Сохранено в файл: ' + state.fileHandle.name);
             showToast('Файл сохранён на диск');
             return;
-        } catch (e) { /* падаем на диалог/скачивание */ }
+        } catch (e) { /* падаем на диалог выбора файла */ }
     }
 
-    // Диалог выбора места сохранения (Chrome/Edge)
+    // Диалог выбора места сохранения (Chrome/Edge). Файл запоминается —
+    // дальше автосохранение пишет в него без вопросов.
     if (window.showSaveFilePicker) {
         try {
             const handle = await window.showSaveFilePicker({
@@ -738,9 +767,11 @@ async function saveToFile() {
                 types: [{ description: 'XML', accept: { 'text/xml': ['.xml'] } }],
             });
             await writeFileHandle(handle, content);
+            state.fileHandle = handle;
             state.dirty = false;
-            setStatus('Сохранено в файл: ' + handle.name);
-            showToast('Файл сохранён на диск');
+            showSaveHint(false);
+            setStatus('Сохранено в файл: ' + handle.name + (autoSaveEnabled() ? ' (автосохранение в него включено)' : ''));
+            showToast('Файл выбран и сохранён — дальнейшие изменения пишутся в него');
             return;
         } catch (e) {
             if (e.name === 'AbortError') return; // пользователь отменил
@@ -748,9 +779,11 @@ async function saveToFile() {
         }
     }
 
+    // Браузер без File System Access API (Firefox/Safari) — стандартное скачивание
     downloadBlob(content, fileName);
     state.dirty = false;
-    showToast('Файл сохранён на диск');
+    showSaveHint(false);
+    showToast('Файл сохранён на диск (скачан)');
 }
 
 // ============================================================
@@ -1118,8 +1151,9 @@ async function fetchGistRaw(url) {
     return await rawRes.text();
 }
 
-// Загрузка обоих промптов из Gist; при сетевой ошибке оставляем резервные тексты.
-// Пользовательские правки (promptEdits) имеют приоритет над текстом с Gist.
+// Загрузка обоих промптов из Gist. Пользовательские правки (promptEdits)
+// имеют приоритет над текстом с Gist; без сети и правок поле промпта остаётся
+// пустым — его можно загрузить кнопкой «↻ Gist» или ввести вручную.
 async function loadPromptsFromGists() {
     setStatus('Загрузка промптов с GitHub Gist…');
     let edits = {};
@@ -1139,8 +1173,8 @@ async function loadPromptsFromGists() {
     }
     renderModeSwitch();
     if (loaded === 2) setStatus('Готово: промпты загружены с Gist');
-    else if (loaded === 1) setStatus('Готово: один промпт загружен с Gist, второй — резервный');
-    else if (failed) setStatus('Готово (промпты с Gist не загрузились — используются резервные тексты)');
+    else if (loaded === 1) setStatus('Готово: загружен только один промпт с Gist (второй — «↻ Gist» или вручную)');
+    else if (failed) setStatus('Промпты с Gist не загрузились — нажмите «↻ Gist» или отредактируйте поле промпта вручную');
 }
 
 function extractXmlFromText(text) {
@@ -1171,7 +1205,64 @@ async function deepseekChat(token, messages) {
     return reply;
 }
 
+// Индикатор прогресса в статусной строке (анимированная точка + текст этапа)
+let aiProgressTimer = null;
+let aiProgressDots = 0;
+function setAiProgress(text) {
+    setStatus((text || 'DeepSeek: обработка…') + ' ' + '·'.repeat(aiProgressDots % 4));
+}
+function startAiProgress() {
+    stopAiProgress();
+    aiProgressDots = 0;
+    setAiProgress('Отправка запроса в DeepSeek');
+    aiProgressTimer = setInterval(() => {
+        aiProgressDots++;
+        // обновляем только точки, не трогая текст, заданный externally
+        const base = els.statusText.textContent.replace(/\s*[·]+\s*$/, '');
+        setStatus(base + ' ' + '·'.repeat(aiProgressDots % 4));
+    }, 500);
+}
+function updateAiStage(text) {
+    if (!state.aiBusy) return;
+    setStatus(text + ' ' + '·'.repeat(aiProgressDots % 4));
+}
+function stopAiProgress() {
+    if (aiProgressTimer) { clearInterval(aiProgressTimer); aiProgressTimer = null; }
+}
+
+// Блокировка/разблокировка интерфейса на время обращения к DeepSeek
+function setUiBusy(busy, reasonText) {
+    state.aiBusy = busy;
+    document.body.classList.toggle('ai-busy', busy);
+    let overlay = document.getElementById('aiOverlay');
+    if (busy) {
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'aiOverlay';
+            overlay.className = 'ai-overlay';
+            overlay.innerHTML =
+                '<div class="ai-overlay-box">' +
+                '<div class="spinner" aria-hidden="true"></div>' +
+                '<div class="ai-overlay-text" id="aiOverlayText">DeepSeek обрабатывает задание…</div>' +
+                '<div class="ai-overlay-hint">Интерфейс заблокирован до получения ответа. Это может занять несколько минут.</div>' +
+                '</div>';
+            document.body.appendChild(overlay);
+        }
+        if (reasonText) {
+            const t = document.getElementById('aiOverlayText');
+            if (t) t.textContent = reasonText;
+        }
+    } else if (overlay) {
+        overlay.remove();
+    }
+    ['btnAskDeepSeek', 'btnApplyXml', 'btnCopyXml', 'btnSaveFile', 'btnPublish', 'btnLoadGist', 'btnSettings']
+        .forEach(id => { const b = document.getElementById(id); if (b) b.disabled = busy; });
+    if (els.xmlEditor) els.xmlEditor.readOnly = busy;
+    if (els.promptText) els.promptText.readOnly = busy;
+}
+
 async function askDeepSeek(mode) {
+    if (state.aiBusy) return;   // повторный клик во время обработки игнорируется
     mode = mode || currentDsMode();
     localStorage.setItem(LS.dsMode, mode);
     renderModeSwitch();
@@ -1179,6 +1270,14 @@ async function askDeepSeek(mode) {
     const token = getDeepseekToken();
     const xml = els.xmlEditor.value || generateXml();
     if (!xml.trim()) return showToast('XML пуст', true);
+
+    // Промпт должен быть загружен из Gist — иначе просим загрузить
+    const promptBase = state.dsPrompts[mode];
+    if (!promptBase || !promptBase.trim()) {
+        showToast('Промпт для режима «' + (mode === 'proposals' ? 'Предложения' : 'Абзацы') + '» ещё не загружен с Gist — нажмите «↻ Gist»', true);
+        reloadActivePromptFromGist();
+        return;
+    }
 
     // Без токена: копировать промпт+XML в буфер и открыть чат DeepSeek
     if (!token) {
@@ -1189,14 +1288,19 @@ async function askDeepSeek(mode) {
         return;
     }
 
-    setStatus('DeepSeek (' + (mode === 'proposals' ? 'режим предложений' : 'режим абзацев') + ')…');
-    showToast('Думаю…');
+    const modeName = mode === 'proposals' ? 'режим предложений' : 'режим абзацев';
+    // Блокируем интерфейс и показываем прогресс на всё время обращения
+    setUiBusy(true, 'DeepSeek (' + modeName + '): обработка задания…');
+    startAiProgress();
     try {
         const messages = [{ role: 'user', content: buildDsMessage(mode) }];
         let fullReply = '';
         // Модель могла не закончить задание за один ответ (нет финального блока) —
         // просим продолжить, максимум 3 дополнительных запроса.
         for (let i = 0; i < 4; i++) {
+            updateAiStage(i === 0
+                ? 'DeepSeek (' + modeName + '): запрос отправлен, ждём ответ…'
+                : 'DeepSeek (' + modeName + '): продолжение генерации (' + i + '/3)…');
             const reply = await deepseekChat(token, messages);
             fullReply += (i > 0 ? '\n' : '') + reply;
             messages.push({ role: 'assistant', content: reply });
@@ -1207,29 +1311,43 @@ async function askDeepSeek(mode) {
                 break; // XML выглядит завершённым, даже если модель забыла маркер
             }
             if (i === 3) break;
-            setStatus('DeepSeek: задание неполное — прошу модель продолжить…');
             messages.push({ role: 'user', content: 'Задание ещё не готово (нет финального XML и маркера ' + READY_MARKER + '). Продолжи и выдай ПОЛНЫЙ готовый XML целиком, без пояснений.' });
         }
 
+        stopAiProgress();
+        updateAiStage('Ответ получен — применяю к редактору…');
         const resultXml = extractXmlFromText(fullReply);
         if (!resultXml || !resultXml.includes('<readingTest')) {
             throw new Error('В ответе модели нет XML-задания');
         }
         els.xmlEditor.value = resultXml;
-        // Результат сразу применяем к редактору (и он же сохранится на диск при автосохранении)
-        if (parseXmlToData(resultXml)) {
-            state.currentFragmentIndex = 0;
-            renderFragment();
-            updateXmlOutput({ immediate: true, force: true });
+        // Результат сразу применяем к редактору; автосохранение запишет его
+        // в выбранный файл на диске (если он выбран и автосохранение включено)
+        applyingXmlToEditor = true;
+        let parsedOk = false;
+        try {
+            parsedOk = parseXmlToData(resultXml);
+            if (parsedOk) {
+                state.currentFragmentIndex = 0;
+                renderFragment();
+            }
+        } finally {
+            applyingXmlToEditor = false;
+        }
+        markTaskChanged();
+        if (parsedOk) {
             showToast('Ответ DeepSeek применён к XML и редактору');
         } else {
             showToast('Ответ получен, но XML некорректен — проверьте панель XML', true);
         }
-        setStatus('DeepSeek: ответ получен');
+        setStatus('DeepSeek: ответ получен и применён');
     } catch (e) {
         console.error(e);
-        setStatus('DeepSeek: ошибка');
+        setStatus('DeepSeek: ошибка — ' + e.message);
         showToast('DeepSeek: ' + e.message, true);
+    } finally {
+        stopAiProgress();
+        setUiBusy(false);
     }
 }
 
