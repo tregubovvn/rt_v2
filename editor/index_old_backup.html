@@ -1,0 +1,1134 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Редактор тестов для RE:AD</title>
+    <style>
+        /* Reset & Base */
+        *, *::before, *::after { box-sizing: border-box; }
+        body, h1, h2, h3, p, div, button, input, textarea { margin: 0; padding: 0; font-family: inherit; }
+        
+        :root {
+            --bg: #0f172a;
+            --bg-elevated: #1e293b;
+            --bg-card: #334155;
+            --fg: #f1f5f9;
+            --fg-muted: #94a3b8;
+            --accent: #38bdf8;
+            --accent-hover: #7dd3fc;
+            --border: #475569;
+            --danger: #f87171;
+            --success: #4ade80;
+            --warning: #fbbf24;
+            --radius: 8px;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--fg);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--fg-muted); }
+
+        /* Layout */
+        header {
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border);
+            padding: 0.75rem 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            z-index: 10;
+        }
+
+        .header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem;
+        }
+        
+        .header-tokens {
+            display: flex;
+            gap: 1rem;
+            width: 100%;
+        }
+        
+        .token-group {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .editor-scroll-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1.5rem;
+        }
+
+        .center-container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        /* XML Panel & Resizer */
+        .resizer {
+            height: 5px;
+            background: var(--border);
+            cursor: ns-resize;
+            transition: background 0.2s;
+        }
+        .resizer:hover, .resizer.active { background: var(--accent); }
+
+        .xml-panel {
+            height: 300px;
+            min-height: 100px;
+            max-height: 80vh;
+            background: var(--bg);
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .xml-header {
+            padding: 0.5rem 1rem;
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+
+        .xml-textarea {
+            flex: 1;
+            width: 100%;
+            background: transparent;
+            border: none;
+            color: var(--fg);
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 14px;
+            padding: 1rem;
+            resize: none;
+            outline: none;
+            line-height: 1.5;
+        }
+
+        /* Controls */
+        .btn {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--fg);
+            padding: 0.5rem 1rem;
+            border-radius: var(--radius);
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 0.875rem;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+        .btn:hover { background: var(--border); }
+        .btn-primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+        .btn-primary:hover { background: var(--accent-hover); }
+        .btn-ai { background: #8b5cf6; color: #fff; border-color: #8b5cf6; }
+        .btn-ai:hover { background: #a78bfa; }
+        
+        .input-base {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--fg);
+            padding: 0.5rem 0.75rem;
+            border-radius: var(--radius);
+            font-size: 0.875rem;
+            width: 100%;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+        .input-base:focus { border-color: var(--accent); }
+
+        /* Fragment Navigation */
+        .nav-bar {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .nav-btn {
+            padding: 0.4rem 0.8rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--fg-muted);
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        .nav-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+        .nav-btn:disabled { opacity: 0.5; cursor: default; }
+        .nav-btn.active { background: var(--accent); color: #000; border-color: var(--accent); }
+
+        /* Cards */
+        .card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .settings-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        /* Questions */
+        .question-block {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        
+        .question-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+            font-size: 0.85rem;
+        }
+
+        .badge {
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.7rem;
+        }
+        .badge-choice { background: rgba(56, 189, 248, 0.2); color: var(--accent); }
+        .badge-input { background: rgba(251, 191, 36, 0.2); color: var(--warning); }
+
+        .option-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+            padding: 0.5rem;
+            background: var(--bg-elevated);
+            border-radius: 4px;
+            border: 1px solid transparent;
+        }
+        .option-row.correct { border-color: var(--accent); background: rgba(56, 189, 248, 0.1); }
+
+        .radio {
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--border);
+            border-radius: 50%;
+            cursor: pointer;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .radio.selected { border-color: var(--accent); background: var(--accent); }
+        .radio.selected::after { content: ''; width: 4px; height: 4px; background: #000; border-radius: 50%; }
+
+        .opt-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--fg);
+            outline: none;
+            font-size: 0.9rem;
+        }
+
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+        }
+        .btn-icon {
+            background: transparent;
+            border: none;
+            color: var(--fg-muted);
+            cursor: pointer;
+            padding: 2px;
+            line-height: 1;
+        }
+        .btn-icon:hover { color: var(--danger); }
+
+        /* Status Bar */
+        .status-bar {
+            background: var(--bg);
+            padding: 0.5rem 1rem;
+            border-top: 1px solid var(--border);
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            min-height: 40px;
+        }
+        
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--fg-muted);
+        }
+
+        .raw-url-display {
+            background: var(--bg-elevated);
+            padding: 4px 8px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            max-width: 400px;
+        }
+        
+        .url-text {
+            color: var(--accent);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-family: monospace;
+            font-size: 0.8rem;
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            background: var(--bg-card);
+            border-left: 4px solid var(--accent);
+            color: var(--fg);
+            border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 1000;
+        }
+        .toast.show { transform: translateY(0); opacity: 1; }
+        .toast.error { border-color: var(--danger); }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s;
+        }
+        .modal-overlay.show { opacity: 1; pointer-events: all; }
+        .modal {
+            background: var(--bg-elevated);
+            padding: 2rem;
+            border-radius: var(--radius);
+            width: 90%;
+            max-width: 400px;
+            border: 1px solid var(--border);
+            transform: scale(0.95);
+            transition: transform 0.2s;
+        }
+        .modal-overlay.show .modal { transform: scale(1); }
+
+        /* Utility */
+        .hidden { display: none !important; }
+        .flex-gap { display: flex; gap: 0.5rem; align-items: center; }
+        .label { font-size: 0.75rem; color: var(--fg-muted); margin-bottom: 0.25rem; display: block; }
+        
+        @media (max-width: 768px) {
+            .header-tokens { flex-direction: column; }
+            .token-group { width: 100%; }
+            .header-row { flex-wrap: wrap; }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="header-row">
+            <div>
+                <h1 style="font-size: 1.25rem; font-weight: 700; letter-spacing: -0.5px;">Reading Test Editor</h1>
+            </div>
+            <div class="flex-gap">
+                <button class="btn" onclick="window.open('https://gist.github.com/tregubovvn/36b6169ed472e716084c8fbde5e31012', '_blank')"">Промпт из предложения</button>
+                <button class="btn" onclick="window.open('https://gist.github.com/tregubovvn/e837aa6949f0b20dee3925983ba2f424', '_blank')"">Промпт для заданий</button>
+
+                <button class="btn btn-primary" onclick="createNewGist()">Новое задание</button>
+                <button class="btn" onclick="showLoadModal()">Загрузить задание</button>
+                <button class="btn" onclick="autoSaveToGist()">Сохранить задание</button>
+                
+            </div>
+        </div>
+        
+        <div class="header-tokens">
+
+            
+            <div class="token-group">
+                <label class="label" style="white-space: nowrap;">GitHub Token:</label>
+                <input type="password" id="githubToken" class="input-base" style="font-family: monospace; font-size: 0.8rem;" placeholder="" onchange="saveTokens()">
+                <a href="https://github.com/settings/tokens/new" target="_blank" style="font-size: 0.7rem; color: var(--accent); white-space: nowrap;">Get</a>
+           </div>
+
+            <div class="token-group">
+                <label class="label" style="white-space: nowrap;">DeepSeek Token:</label>
+                <input type="password" id="deepseekToken" class="input-base" style="font-family: monospace; font-size: 0.8rem;" placeholder="sk-..." onchange="saveTokens()">
+                <a href="https://platform.deepseek.com/api_keys" target="_blank" style="font-size: 0.7rem; color: var(--accent); white-space: nowrap;">Get</a>
+            </div>
+        </div>
+
+        <div class="header-tokens">
+            <div class="token-group">
+                <label class="label" style="white-space: nowrap;">Название темы:</label>
+                <input type="text" id="topicName" class="input-base" placeholder="Enter topic name..." oninput="updateTopicName()">
+            </div>
+            <div class="token-group">
+                <label class="label" style="white-space: nowrap;">GIST:</label>
+                <div id="gistLinkContainer" class="raw-url-display hidden" style="flex: 1; max-width: none;">
+                    <a id="gistLinkText" class="url-text" style="flex: 1; min-width: 0;" href="#" target="_blank" title="Open GIST in a new tab"></a>
+                    <button class="btn-icon" onclick="copyGistUrl()" title="Скопировать ссылку на задание">
+                        <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                    </button>
+                    <button class="btn btn-sm" onclick="openTask()" title="Open task and copy its link">Открыть задание</button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="editor-scroll-container" id="editorContainer">
+            <div class="center-container">
+                <!-- Navigation -->
+                <div class="nav-bar">
+                    <button id="prevBtn" class="nav-btn" onclick="prevFragment()" disabled>Предыдущий</button>
+                    <div id="fragmentTabs" style="display: flex; gap: 4px;"></div>
+                    <button id="nextBtn" class="nav-btn" onclick="nextFragment()">Следующий</button>
+                    <div style="flex:1"></div>
+                    <button class="btn btn-sm" onclick="addFragment()">+ Добавить фрагмент</button>
+                </div>
+
+                <!-- Fragment Editor -->
+                <div class="card" id="fragmentCard">
+                    <div class="card-header">
+                        <h2>Фрагмент <span id="fragmentNumber">1</span></h2>
+                        <button class="btn-icon" onclick="deleteCurrentFragment()" title="Delete">
+                            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                        </button>
+                    </div>
+
+                    <div class="settings-grid">
+                        <div>
+                            <label class="label">Время на отлично (с.)</label>
+                            <input type="number" id="timeExcellent" class="input-base" onchange="updateFragment()">
+                        </div>
+                        <div>
+                            <label class="label">Время на хорошо (sec)</label>
+                            <input type="number" id="timeGood" class="input-base" onchange="updateFragment()">
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom: 1rem;">
+                        <label class="label">Text</label>
+                        <textarea id="fragmentText" class="input-base" style="min-height: 100px; resize: vertical;" oninput="updateFragment()"></textarea>
+                    </div>
+
+                    <div style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 1rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                            <h3 style="font-size: 1rem; font-weight: 600;">Вопросы</h3>
+                            <div class="flex-gap">
+                                <button class="btn btn-sm" onclick="addQuestion('choice')">+ Вопросы на выбор</button>
+                                <button class="btn btn-sm" onclick="addQuestion('input')">+ Вопросы на ввод</button>
+                            </div>
+                        </div>
+                        <div id="questionsContainer"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="resizer" id="resizer"></div>
+
+        <div class="xml-panel" id="xmlPanel">
+            <div class="xml-header">
+                <span>XML</span>
+                <div class="flex-gap">
+                    <button class="btn btn-sm" onclick="document.getElementById('xmlFileInput').click()">Загрузить файл</button>
+                    <input type="file" id="xmlFileInput" accept=".xml,text/xml,application/xml" style="display: none;" onchange="loadXmlFromFile(this)">
+                    <button class="btn btn-sm btn-ai" onclick="askDeepSeek()">Ask DeepSeek</button>
+                    <button class="btn btn-sm" onclick="copyXml()">Копировать</button>
+                    <button class="btn btn-sm" onclick="applyXmlChanges()">Обновить</button>
+                </div>
+            </div>
+            <textarea id="xmlEditor" class="xml-textarea" spellcheck="false" oninput="onXmlManualEdit()"></textarea>
+        </div>
+        
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-item" id="statusText">
+                Ready
+            </div>
+        </div>
+    </main>
+
+    <!-- Modal -->
+    <div class="modal-overlay" id="loadModal">
+        <div class="modal">
+            <h3 style="margin-bottom: 1rem; font-weight: 600;">Загрзить из GitHub Gist</h3>
+            <label class="label">GIST Link</label>
+            <input type="text" id="loadGistId" class="input-base" placeholder="https://gist.github.com/user/abc123..." style="margin-bottom: 0.5rem;">
+            <p style="font-size: 0.75rem; color: var(--fg-muted); margin-bottom: 1rem;">Вставьте ссылку на задание (or raw link, or just the Gist ID).</p>
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                <button class="btn" onclick="hideLoadModal()">Отмена</button>
+                <button class="btn btn-primary" onclick="loadFromGist()">Щагрузить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast"></div>
+
+    <script>
+        // --- DATA & STATE ---
+        let testData = { topicName: '', fragments: [] };
+        let currentFragmentIndex = 0;
+        let currentGistId = null;
+        let currentGistUrl = null;      // https://gist.github.com/user/id
+        let currentRawUrl = null;       // raw file url (updated after each save)
+        let currentGistFilename = 'reading_test.xml';
+        let syncTimeout = null;
+        let autoSaveTimeout = null;
+        let isSaving = false;
+        let needsAnotherSave = false;
+        let skipNextAutoSave = false;
+
+        // Default XML Template
+        const defaultXml = ``;
+
+        // --- INITIALIZATION ---
+        document.addEventListener('DOMContentLoaded', () => {
+            loadTokens();
+            parseXmlToData(defaultXml);
+            renderFragment();
+            updateXmlOutput();
+            initResizer();
+        });
+
+        // --- TOKEN MANAGEMENT ---
+        function loadTokens() {
+            document.getElementById('githubToken').value = localStorage.getItem('gh_token') || '';
+            document.getElementById('deepseekToken').value = localStorage.getItem('ds_token') || '';
+        }
+        function saveTokens() {
+            localStorage.setItem('gh_token', document.getElementById('githubToken').value.trim());
+            localStorage.setItem('ds_token', document.getElementById('deepseekToken').value.trim());
+        }
+        function getGithubToken() { return document.getElementById('githubToken').value.trim(); }
+        function getDeepseekToken() { return document.getElementById('deepseekToken').value.trim(); }
+
+        // --- XML PARSING ---
+        function parseXmlToData(xmlString) {
+            try {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(xmlString, 'text/xml');
+                if (doc.querySelector('parsererror')) throw new Error('Invalid XML');
+
+                testData.topicName = doc.querySelector('topicName')?.textContent || '';
+                document.getElementById('topicName').value = testData.topicName;
+
+                testData.fragments = [];
+                doc.querySelectorAll('fragment').forEach(frag => {
+                    const f = {
+                        timeExcellent: parseInt(frag.getAttribute('timeExcellent')) || 60,
+                        timeGood: parseInt(frag.getAttribute('timeGood')) || 90,
+                        text: frag.querySelector('text')?.textContent || '',
+                        questions: []
+                    };
+                    frag.querySelectorAll('question').forEach(q => {
+                        const qData = {
+                            type: q.getAttribute('type') || 'choice',
+                            text: q.querySelector('text')?.textContent || '',
+                            options: [],
+                            answer: ''
+                        };
+                        if (qData.type === 'choice') {
+                            q.querySelectorAll('option').forEach(opt => {
+                                qData.options.push({
+                                    text: opt.textContent,
+                                    correct: opt.getAttribute('correct') === 'true'
+                                });
+                            });
+                        } else {
+                            qData.answer = q.querySelector('answer')?.textContent || '';
+                        }
+                        f.questions.push(qData);
+                    });
+                    testData.fragments.push(f);
+                });
+                return true;
+            } catch (e) {
+                showToast('Invalid XML format', true);
+                return false;
+            }
+        }
+
+        function generateXml() {
+            let xml = '<readingTest>\n';
+            xml += `<topicName>${escapeXml(testData.topicName || '')}</topicName>\n`;
+            testData.fragments.forEach(frag => {
+                xml += `<fragment timeExcellent="${frag.timeExcellent}" timeGood="${frag.timeGood}">\n`;
+                xml += `<text>${escapeXml(frag.text)}</text>\n`;
+                xml += `<questions>\n`;
+                frag.questions.forEach(q => {
+                    xml += `<question type="${q.type}">\n`;
+                    xml += `<text>${escapeXml(q.text)}</text>\n`;
+                    if (q.type === 'choice') {
+                        xml += `<options>\n`;
+                        q.options.forEach(opt => {
+                            const attr = opt.correct ? ' correct="true"' : '';
+                            xml += `<option${attr}>${escapeXml(opt.text)}</option>\n`;
+                        });
+                        xml += `</options>\n`;
+                    } else {
+                        xml += `<answer>${escapeXml(q.answer)}</answer>\n`;
+                    }
+                    xml += `</question>\n`;
+                });
+                xml += `</questions>\n</fragment>\n`;
+            });
+            xml += `</readingTest>`;
+            return xml;
+        }
+
+        function escapeXml(str) {
+            if (!str) return '';
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // --- RENDERING ---
+        function renderFragment() {
+            if (!testData.fragments.length) {
+                testData.fragments.push({ timeExcellent: 60, timeGood: 90, text: '', questions: [] });
+            }
+            const frag = testData.fragments[currentFragmentIndex];
+            
+            document.getElementById('fragmentNumber').textContent = currentFragmentIndex + 1;
+            document.getElementById('timeExcellent').value = frag.timeExcellent;
+            document.getElementById('timeGood').value = frag.timeGood;
+            document.getElementById('fragmentText').value = frag.text;
+
+            renderQuestions();
+            updateNavigation();
+        }
+
+        function renderQuestions() {
+            const container = document.getElementById('questionsContainer');
+            const frag = testData.fragments[currentFragmentIndex];
+            
+            if (!frag.questions.length) {
+                container.innerHTML = '<div style="color:var(--fg-muted); text-align:center; padding: 1rem; opacity: 0.7;">No questions added yet.</div>';
+                return;
+            }
+
+            container.innerHTML = frag.questions.map((q, i) => {
+                if (q.type === 'choice') return renderChoice(q, i);
+                return renderInput(q, i);
+            }).join('');
+        }
+
+        function renderChoice(q, i) {
+            const opts = q.options.map((o, j) => `
+                <div class="option-row ${o.correct ? 'correct' : ''}">
+                    <div class="radio ${o.correct ? 'selected' : ''}" onclick="setCorrectAnswer(${i}, ${j})"></div>
+                    <input type="text" class="opt-input" value="${esc(o.text)}" onchange="updateOption(${i}, ${j}, this.value)">
+                    <button class="btn-icon" onclick="removeOption(${i}, ${j})">&#10005;</button>
+                </div>
+            `).join('');
+            
+            return `
+                <div class="question-block">
+                    <div class="question-header">
+                        <span><span class="badge badge-choice">Choice</span> Q${i+1}</span>
+                        <button class="btn-icon" onclick="removeQuestion(${i})">&#10005;</button>
+                    </div>
+                    <textarea class="input-base" style="min-height:40px; font-size:0.9rem; margin-bottom:8px;" onchange="updateQuestionText(${i}, this.value)">${esc(q.text)}</textarea>
+                    <div>${opts}</div>
+                    <button class="btn btn-sm" style="margin-top:8px; opacity:0.7;" onclick="addOption(${i})">+ Option</button>
+                </div>
+            `;
+        }
+
+        function renderInput(q, i) {
+            return `
+                <div class="question-block">
+                    <div class="question-header">
+                        <span><span class="badge badge-input">Input</span> Q${i+1}</span>
+                        <button class="btn-icon" onclick="removeQuestion(${i})">&#10005;</button>
+                    </div>
+                    <textarea class="input-base" style="min-height:40px; font-size:0.9rem; margin-bottom:8px;" onchange="updateQuestionText(${i}, this.value)">${esc(q.text)}</textarea>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <span style="font-size:0.8rem; color:var(--fg-muted);">Answer:</span>
+                        <input type="text" class="input-base" value="${esc(q.answer)}" onchange="updateAnswer(${i}, this.value)" style="flex:1;">
+                    </div>
+                </div>
+            `;
+        }
+
+        function esc(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        function updateNavigation() {
+            document.getElementById('prevBtn').disabled = currentFragmentIndex === 0;
+            document.getElementById('nextBtn').disabled = currentFragmentIndex >= testData.fragments.length - 1;
+            
+            document.getElementById('fragmentTabs').innerHTML = testData.fragments.map((_, i) => 
+                `<button class="nav-btn ${i === currentFragmentIndex ? 'active' : ''}" onclick="goToFragment(${i})">${i+1}</button>`
+            ).join('');
+        }
+
+        // --- ACTIONS ---
+        const updateXmlOutput = () => {
+            clearTimeout(syncTimeout);
+            syncTimeout = setTimeout(() => {
+                document.getElementById('xmlEditor').value = generateXml();
+            }, 100);
+            scheduleAutoSave();
+        };
+
+        const updateFragment = () => {
+            const frag = testData.fragments[currentFragmentIndex];
+            frag.timeExcellent = parseInt(document.getElementById('timeExcellent').value) || 60;
+            frag.timeGood = parseInt(document.getElementById('timeGood').value) || 90;
+            frag.text = document.getElementById('fragmentText').value;
+            updateXmlOutput();
+        };
+
+        const updateTopicName = () => {
+            testData.topicName = document.getElementById('topicName').value;
+            updateXmlOutput();
+        };
+
+        const addFragment = () => {
+            testData.fragments.push({ timeExcellent: 60, timeGood: 90, text: '', questions: [] });
+            currentFragmentIndex = testData.fragments.length - 1;
+            renderFragment();
+            updateXmlOutput();
+        };
+
+        const deleteCurrentFragment = () => {
+            if (testData.fragments.length <= 1) return showToast('Cannot delete last fragment', true);
+            testData.fragments.splice(currentFragmentIndex, 1);
+            currentFragmentIndex = Math.min(currentFragmentIndex, testData.fragments.length - 1);
+            renderFragment();
+            updateXmlOutput();
+        };
+
+        const prevFragment = () => { if (currentFragmentIndex > 0) { currentFragmentIndex--; renderFragment(); } };
+        const nextFragment = () => { if (currentFragmentIndex < testData.fragments.length - 1) { currentFragmentIndex++; renderFragment(); } };
+        const goToFragment = (i) => { currentFragmentIndex = i; renderFragment(); };
+
+        const addQuestion = (type) => {
+            const frag = testData.fragments[currentFragmentIndex];
+            frag.questions.push({
+                type,
+                text: '',
+                options: type === 'choice' ? [{ text: '', correct: true }, { text: '', correct: false }] : [],
+                answer: ''
+            });
+            renderQuestions();
+            updateXmlOutput();
+        };
+
+        const removeQuestion = (i) => {
+            testData.fragments[currentFragmentIndex].questions.splice(i, 1);
+            renderQuestions();
+            updateXmlOutput();
+        };
+
+        const updateQuestionText = (i, v) => { testData.fragments[currentFragmentIndex].questions[i].text = v; updateXmlOutput(); };
+        const updateAnswer = (i, v) => { testData.fragments[currentFragmentIndex].questions[i].answer = v; updateXmlOutput(); };
+        const updateOption = (qi, oi, v) => { testData.fragments[currentFragmentIndex].questions[qi].options[oi].text = v; updateXmlOutput(); };
+        
+        const addOption = (qi) => {
+            testData.fragments[currentFragmentIndex].questions[qi].options.push({ text: '', correct: false });
+            renderQuestions();
+            updateXmlOutput();
+        };
+
+        const removeOption = (qi, oi) => {
+            const opts = testData.fragments[currentFragmentIndex].questions[qi].options;
+            if (opts.length <= 2) return showToast('Minimum 2 options', true);
+            opts.splice(oi, 1);
+            renderQuestions();
+            updateXmlOutput();
+        };
+
+        const setCorrectAnswer = (qi, oi) => {
+            testData.fragments[currentFragmentIndex].questions[qi].options.forEach((o, i) => o.correct = i === oi);
+            renderQuestions();
+            updateXmlOutput();
+        };
+
+        const applyXmlChanges = () => {
+            if (parseXmlToData(document.getElementById('xmlEditor').value)) {
+                currentFragmentIndex = 0;
+                renderFragment();
+                showToast('XML Applied');
+            }
+        };
+
+        const copyXml = () => {
+            navigator.clipboard.writeText(document.getElementById('xmlEditor').value);
+            showToast('Copied to clipboard');
+        };
+
+        // Manual edits in the XML Output textarea -> auto-save too
+        const onXmlManualEdit = () => {
+            scheduleAutoSave();
+        };
+
+        // --- LOAD XML FROM LOCAL FILE ---
+        async function loadXmlFromFile(input) {
+            const file = input.files && input.files[0];
+            input.value = ''; // allow re-selecting the same file later
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                const xml = e.target.result;
+
+                // Put file content into the XML Output editor
+                document.getElementById('xmlEditor').value = xml;
+
+                // Immediately apply changes (parse into editor data)
+                if (!parseXmlToData(xml)) return; // invalid XML -> parse shows error toast
+                currentFragmentIndex = 0;
+                renderFragment();
+                showToast('XML loaded from file');
+
+                // If GitHub Token is set -> create a new GIST with this content
+                if (getGithubToken()) {
+                    await createNewGist();
+                }
+            };
+            reader.onerror = () => showToast('Failed to read file', true);
+            reader.readAsText(file);
+        }
+
+        // --- GIST API ---
+        function updateGistLinkDisplay() {
+            const container = document.getElementById('gistLinkContainer');
+            const link = document.getElementById('gistLinkText');
+            if (!currentGistUrl) {
+                container.classList.add('hidden');
+                return;
+            }
+            link.href = currentGistUrl;
+            link.textContent = currentGistUrl;
+            container.classList.remove('hidden');
+        }
+
+        async function createNewGist() {
+            const token = getGithubToken();
+            if (!token) return showToast('GitHub Token required', true);
+
+            try {
+                setStatus('Creating new GIST...');
+                const res = await fetch('https://api.github.com/gists', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        description: testData.topicName || 'Reading Test',
+                        public: false,
+                        files: { 'reading_test.xml': { content: document.getElementById('xmlEditor').value || generateXml() } }
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.message);
+
+                currentGistId = data.id;
+                currentGistUrl = data.html_url;
+                currentGistFilename = 'reading_test.xml';
+                currentRawUrl = data.files['reading_test.xml']?.raw_url || null;
+
+                updateGistLinkDisplay();
+                setStatus('New GIST created');
+                showToast('New GIST created');
+            } catch (e) {
+                setStatus('Ready');
+                showToast('Create failed: ' + e.message, true);
+            }
+        }
+
+        function scheduleAutoSave() {
+            if (!currentGistId) return;               // auto-save only works with an existing GIST
+            if (skipNextAutoSave) { skipNextAutoSave = false; return; }
+            setStatus('Unsaved changes...');
+            clearTimeout(autoSaveTimeout);
+            autoSaveTimeout = setTimeout(autoSaveToGist, 150000);
+        }
+
+        async function autoSaveToGist() {
+            const token = getGithubToken();
+            if (!currentGistId || !token) return;
+            if (isSaving) { needsAnotherSave = true; return; }
+            isSaving = true;
+            autoSaveTimeout = null;
+
+            setStatus('Saving to GIST...');
+            try {
+                const res = await fetch(`https://api.github.com/gists/${currentGistId}`, {
+                    method: 'PATCH',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        description: testData.topicName || 'Reading Test',
+                        files: { [currentGistFilename]: { content: document.getElementById('xmlEditor').value } }
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.message);
+
+                const fd = data.files[currentGistFilename];
+                if (fd && fd.raw_url) currentRawUrl = fd.raw_url;
+                setStatus('Saved to GIST at ' + new Date().toLocaleTimeString());
+            } catch (e) {
+                if (String(e.message).toLowerCase().includes('blocked')) {
+                    setStatus('GIST is busy, retrying...');
+                    scheduleAutoSave();
+                } else {
+                    setStatus('Save failed: ' + e.message);
+                    showToast('Auto-save failed: ' + e.message, true);
+                }
+            } finally {
+                isSaving = false;
+                if (needsAnotherSave) {
+                    needsAnotherSave = false;
+                    scheduleAutoSave();
+                }
+            }
+        }
+
+        function copyGistUrl() {
+            if (!currentGistUrl) return showToast('No GIST yet', true);
+            navigator.clipboard.writeText(currentGistUrl);
+            showToast('GIST link copied');
+        }
+
+        async function openTask() {
+            if (!currentGistId) return showToast('Create or load a GIST first', true);
+
+            copyGistUrl();
+            // Open the window synchronously (to avoid popup blocking), then flush pending changes
+            const win = window.open('about:blank', '_blank');
+            try {
+                if (autoSaveTimeout) {
+                    clearTimeout(autoSaveTimeout);
+                    autoSaveTimeout = null;
+                    await autoSaveToGist();
+                }
+            } catch (e) {}
+
+            if (!currentRawUrl) {
+                if (win) win.close();
+                return showToast('Raw URL not available', true);
+            }
+
+            const taskUrl = 'https://tregubovvn.github.io/rt/index.html?file=' + encodeURIComponent(currentRawUrl);
+
+            navigator.clipboard.writeText(taskUrl);
+            showToast('GIST link copied');
+            
+            try { navigator.clipboard.writeText(taskUrl); } catch (e) {}
+            if (win) { win.opener = null; win.location.href = taskUrl; }
+            else { window.open(taskUrl, '_blank'); }
+            showToast('Task link copied to clipboard');
+        }
+
+        function extractGistId(input) {
+            input = (input || '').trim();
+            if (!input) return null;
+            // If a task link was pasted, take the file parameter from it
+            try {
+                const u = new URL(input);
+                const f = u.searchParams.get('file');
+                if (f) input = f;
+            } catch (e) { /* not a URL */ }
+            const m = input.match(/(?:gist\.github\.com|gist\.githubusercontent\.com)\/(?:[^\/\s]+\/)?([0-9a-f]{7,})/i);
+            if (m) return m[1];
+            if (/^[0-9a-f]{7,}$/i.test(input)) return input;
+            return null;
+        }
+
+        async function loadFromGist() {
+            const token = getGithubToken();
+            const input = document.getElementById('loadGistId').value.trim();
+            if (!token || !input) return showToast('GitHub Token and GIST link required', true);
+
+            const id = extractGistId(input);
+            if (!id) return showToast('Could not extract GIST ID', true);
+
+            try {
+                setStatus('Loading GIST...');
+                const res = await fetch(`https://api.github.com/gists/${id}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.message);
+
+                // Pick the XML file (or the first available file)
+                let fileName = null;
+                if (data.files['reading_test.xml']) {
+                    fileName = 'reading_test.xml';
+                } else {
+                    const names = Object.keys(data.files);
+                    fileName = names.find(n => n.toLowerCase().endsWith('.xml')) || names[0];
+                }
+                const file = data.files[fileName];
+                if (!file) throw new Error('No files in GIST');
+
+                if (parseXmlToData(file.content)) {
+                    currentGistId = data.id;
+                    currentGistUrl = data.html_url || `https://gist.github.com/${id}`;
+                    currentGistFilename = fileName;
+                    currentRawUrl = file.raw_url || null;
+
+                    updateGistLinkDisplay();
+                    currentFragmentIndex = 0;
+                    skipNextAutoSave = true; // no pointless re-save right after load
+                    renderFragment();
+                    updateXmlOutput();
+                    hideLoadModal();
+                    setStatus('GIST loaded');
+                    showToast('GIST loaded');
+                } else {
+                    setStatus('Ready');
+                }
+            } catch (e) {
+                setStatus('Ready');
+                showToast('Load failed: ' + e.message, true);
+            }
+        }
+
+        // --- DEEPSEEK API ---
+        async function askDeepSeek() {
+            const token = getDeepseekToken();
+            if (!token) return showToast('DeepSeek Token required', true);
+            
+            const content = document.getElementById('xmlEditor').value;
+            if (!content) return showToast('XML is empty', true);
+
+            showToast('Thinking...', false);
+
+            try {
+                const res = await fetch('https://api.deepseek.com/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        model: "deepseek-chat",
+                        messages: [
+                            { role: "user", content: content }
+                        ],
+                        stream: false
+                    })
+                });
+
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error?.message || 'Unknown error');
+
+                if (data.choices && data.choices[0] && data.choices[0].message) {
+                    document.getElementById('xmlEditor').value = data.choices[0].message.content;
+                    scheduleAutoSave(); // auto-save DeepSeek's changes too
+                    showToast('Response received. Check XML.');
+                } else {
+                    throw new Error('Invalid response structure');
+                }
+
+            } catch (e) {
+                console.error(e);
+                showToast('DeepSeek Error: ' + e.message, true);
+            }
+        }
+
+        // --- UI HELPERS ---
+        function showToast(msg, isErr = false) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = 'toast show' + (isErr ? ' error' : '');
+            setTimeout(() => t.classList.remove('show'), 3000);
+        }
+
+        function setStatus(text) {
+            document.getElementById('statusText').textContent = text;
+        }
+
+        function showLoadModal() { document.getElementById('loadModal').classList.add('show'); }
+        function hideLoadModal() { document.getElementById('loadModal').classList.remove('show'); }
+
+        function initResizer() {
+            const resizer = document.getElementById('resizer');
+            const panel = document.getElementById('xmlPanel');
+            let startY, startH;
+
+            const start = (e) => {
+                startY = e.clientY || e.touches[0].clientY;
+                startH = parseInt(getComputedStyle(panel).height);
+                document.addEventListener('mousemove', doDrag);
+                document.addEventListener('mouseup', stopDrag);
+            };
+            const doDrag = (e) => {
+                const h = startH - ((e.clientY || e.touches[0].clientY) - startY);
+                panel.style.height = Math.max(100, Math.min(600, h)) + 'px';
+            };
+            const stopDrag = () => {
+                document.removeEventListener('mousemove', doDrag);
+                document.removeEventListener('mouseup', stopDrag);
+            };
+
+            resizer.addEventListener('mousedown', start);
+        }
+    </script>
+</body>
+</html>
