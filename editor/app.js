@@ -9,7 +9,7 @@
 const AUTOSAVE_DEBOUNCE_MS = 1500;      // задержка автосохранения после изменений
 const DEFAULT_TIME_EXCELLENT = 60;
 const DEFAULT_TIME_GOOD = 90;
-const TASK_APP_BASE_URL = 'https://tregubovvn.github.io/rt/index.html';
+const TASK_APP_BASE_URL = 'https://tregubovvn.github.io/rt_v2/index.html';
 const GITVERSE_API = 'https://gitverse.ru/api/v2';
 const GIST_FILENAME = 'reading_test.xml';
 

@@ -383,3 +383,45 @@ td.center { text-align: center; }
     vertical-align: middle;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* --- Кнопка «Завершить тест» --- */
+.btn-finish {
+    padding: 8px 14px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    border-radius: 10px;
+    border: none;
+    cursor: pointer;
+    width: auto;
+    background: var(--danger);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(214, 48, 49, 0.35);
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+.btn-finish:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(214, 48, 49, 0.45); }
+
+/* Рядом с кнопкой «Ответить» в зоне управления */
+.controls-row { display: flex; gap: 10px; align-items: center; margin-top: 16px; }
+.controls-row .btn { width: auto; flex: 1; margin-top: 0; }
+.btn-finish-inline {
+    flex: 0 0 auto;
+    background: var(--danger);
+    box-shadow: 0 4px 15px rgba(214, 48, 49, 0.35);
+}
+.btn-finish-inline:hover { box-shadow: 0 6px 20px rgba(214, 48, 49, 0.5); }
+
+/* --- Блок информации о сдаче на экране результатов --- */
+.result-info-block {
+    background: rgba(255, 255, 255, 0.75);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 14px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+    text-align: left;
+    font-size: clamp(13px, 2.8vw, 15px);
+    line-height: 1.9;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+}
+.result-info-label { font-weight: 700; color: var(--text-light); }

@@ -1,6 +1,6 @@
 # Reading Test Editor
 
-https://tregubovvn.github.io/rt/editor/index.html
+https://tregubovvn.github.io/rt_v2/editor/index.html
 
 Одностраничное веб-приложение для создания и редактирования XML-тестов по чтению. Приложение предоставляет удобный графический интерфейс для работы с фрагментами текста и вопросами, а также интеграцию с GitHub Gist для хранения данных и DeepSeek AI для генерации контента.
 
