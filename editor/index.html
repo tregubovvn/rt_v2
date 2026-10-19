@@ -16,18 +16,10 @@
                 <label class="label" for="topicName">Тема:</label>
                 <input type="text" id="topicName" class="input-base input-sm" placeholder="Название темы…">
             </span>
-            <span id="gistLinkContainer" class="raw-url-display hidden">
-                <a id="gistLinkText" class="url-text" href="#" target="_blank" rel="noopener" title="Открыть GIST"></a>
-                <button type="button" class="btn-icon" id="btnCopyGistUrl" title="Скопировать ссылку на задание">
-                    <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-                </button>
-                <button type="button" class="btn btn-sm" id="btnOpenTask" title="Открыть задание и скопировать ссылку">Открыть задание</button>
-            </span>
         </div>
 
         <nav class="toolbar" aria-label="Панель действий">
             <div class="btn-group" role="group" aria-label="Файл">
-                <button type="button" class="btn" id="btnOpenFile" title="Загрузить XML из файла на компьютере">📂 Открыть файл</button>
                 <button type="button" class="btn" id="btnLoadGist" title="Загрузить задание из GitHub Gist">☁️ Загрузить из Gist</button>
                 <button type="button" class="btn btn-primary" id="btnSaveFile" title="Сохранить XML в файл на диск компьютера">💾 Сохранить в файл</button>
             </div>
@@ -47,19 +39,7 @@
             </div>
 
             <div class="btn-group" role="group" aria-label="AI и справочное">
-                <button type="button" class="btn btn-ai" id="btnAskDeepSeek" title="Отправить XML из панели в DeepSeek (режим по умолчанию)">✨ DeepSeek ▾</button>
-                <div class="publish-menu hidden" id="deepseekMenu">
-                    <button type="button" class="publish-item" id="btnDsParagraphs" title="Запросить генерацию/улучшение абзацев текста">
-                        <strong>Режим абзацев</strong>
-                        <span>XML + промпт абзацев → результат XML вернётся в панель</span>
-                    </button>
-                    <button type="button" class="publish-item" id="btnDsProposals" title="Запросить генерацию предложений/заданий">
-                        <strong>Режим предложений</strong>
-                        <span>XML + промпт предложений → результат XML вернётся в панель</span>
-                    </button>
-                </div>
-                <button type="button" class="btn btn-ghost" id="btnPromptProposal" title="Скопировать промпт для режима предложений">Промпт: предложение</button>
-                <button type="button" class="btn btn-ghost" id="btnPromptParagraphs" title="Скопировать промпт для режима абзацев">Промпт: абзацы</button>
+                <button type="button" class="btn btn-ai" id="btnAskDeepSeek" title="Отправить XML из панели в DeepSeek (активный режим)">✨ Отправить в DeepSeek</button>
             </div>
 
             <div class="btn-group" role="group" aria-label="Настройки">
@@ -79,6 +59,27 @@
                 </div>
             </div>
             <textarea id="xmlEditor" class="xml-textarea" spellcheck="false"></textarea>
+
+            <!-- Панель промпта: режим DeepSeek + активный промпт + ссылка на GIST -->
+            <div class="prompt-bar" id="promptBar">
+                <div class="prompt-mode-row">
+                    <span class="prompt-mode-label">Режим DeepSeek:</span>
+                    <div class="mode-switch" role="radiogroup" aria-label="Режим DeepSeek">
+                        <button type="button" class="mode-btn" id="btnModeProposals" role="radio" aria-checked="false">Предложения</button>
+                        <button type="button" class="mode-btn" id="btnModeParagraphs" role="radio" aria-checked="true">Абзацы</button>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-ghost" id="btnCopyPrompt" title="Скопировать активный промпт">📋 Промпт</button>
+                    <span class="prompt-spacer"></span>
+                    <span id="gistLinkContainer" class="raw-url-display hidden">
+                        <a id="gistLinkText" class="url-text" href="#" target="_blank" rel="noopener" title="Открыть GIST"></a>
+                        <button type="button" class="btn-icon" id="btnCopyGistUrl" title="Скопировать ссылку на задание">
+                            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                        </button>
+                        <button type="button" class="btn btn-sm" id="btnOpenTask" title="Открыть задание и скопировать ссылку">Открыть задание</button>
+                    </span>
+                </div>
+                <pre class="prompt-text" id="promptText" title="Активный промпт для отправки в DeepSeek"></pre>
+            </div>
         </aside>
 
         <div class="resizer" id="resizer" title="Потяните, чтобы изменить ширину панели XML"></div>
@@ -130,7 +131,6 @@
             </div>
         </section>
 
-        <input type="file" id="xmlFileInput" accept=".xml,text/xml,application/xml" class="hidden">
     </main>
 
     <!-- ===== Статусная строка ===== -->

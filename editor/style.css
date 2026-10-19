@@ -474,20 +474,74 @@ body {
 .switch-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
 .autosave-interval { margin-top: 0.75rem; max-width: 220px; }
 
+/* ===== Панель промпта под окном XML: режим DeepSeek + активный промпт + ссылка на GIST ===== */
+.prompt-bar {
+    border-top: 1px solid var(--border);
+    background: var(--bg-elevated);
+    padding: 0.5rem 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    max-height: 40%;
+    overflow: auto;
+}
+
+.prompt-mode-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.prompt-mode-label {
+    font-size: 0.78rem;
+    color: var(--fg-muted, #6b7280);
+    white-space: nowrap;
+}
+
+.mode-switch {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.mode-btn {
+    border: none;
+    background: transparent;
+    color: inherit;
+    padding: 0.3rem 0.7rem;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+.mode-btn + .mode-btn { border-left: 1px solid var(--border); }
+.mode-btn.active { background: #8b5cf6; color: #fff; font-weight: 600; }
+
+.prompt-spacer { flex: 1; }
+
+.prompt-text {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    color: var(--fg-muted, #6b7280);
+    background: var(--bg);
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    padding: 0.4rem 0.5rem;
+    max-height: 120px;
+    overflow: auto;
+}
+
 /* ===== Адаптивность ===== */
 @media (max-width: 900px) {
     .workspace { flex-direction: column; }
-    .xml-panel { width: 100% !important; max-width: none; height: 220px; border-right: none; border-bottom: 1px solid var(--border); }
+    .xml-panel { width: 100% !important; max-width: none; height: 340px; border-right: none; border-bottom: 1px solid var(--border); }
     .resizer { display: none; }
     .settings-grid { grid-template-columns: 1fr; }
     .toolbar { width: 100%; }
     .topic-inline { max-width: none; }
-}
-
-/* ===== Меню DeepSeek (аналогично меню публикации) ===== */
-#btnAskDeepSeek { position: relative; }
-.btn-group:has(#deepseekMenu) { position: relative; }
-#deepseekMenu {
-    left: auto;
-    right: 0;
 }

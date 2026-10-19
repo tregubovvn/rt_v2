@@ -42,7 +42,10 @@ const state = {
 };
 
 // Отладочный доступ к состоянию из консоли браузера (window.editorState.state)
-window.editorState = { state };
+window.editorState = { state, api: {
+    publishToGist, publishToGitverse, saveToFile, askDeepSeek, setDsMode, currentDsMode,
+    generateXml, parseXmlToData, DS_PROMPTS
+} };
 
 let els = {};                   // кэш ссылок на DOM-элементы
 
@@ -53,6 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
     parseXmlToData(els.xmlEditor.value);
     renderAll();
     updateXmlOutput({ immediate: true });
+    renderModeSwitch();
     initResizer();
     bindEvents();
 });
@@ -64,9 +68,10 @@ function cacheElements() {
         'fragmentCard', 'fragmentNumber', 'timeExcellent', 'timeGood', 'fragmentText',
         'questionsContainer', 'fragmentTabs', 'prevBtn', 'nextBtn',
         'statusText', 'toast', 'gistLinkContainer', 'gistLinkText',
-        'loadModal', 'loadGistId', 'settingsModal', 'xmlFileInput',
+        'loadModal', 'loadGistId', 'settingsModal',
         'autoSaveToggle', 'saveInterval', 'autoSaveFolderName',
-        'publishMenu', 'deepseekMenu',
+        'publishMenu', 'promptBar', 'promptText',
+        'btnModeProposals', 'btnModeParagraphs', 'btnCopyPrompt',
     ];
     els = {};
     ids.forEach(id => { els[id] = document.getElementById(id); });
@@ -74,25 +79,23 @@ function cacheElements() {
 
 function bindEvents() {
     // Верхняя панель
-    on('btnPromptProposal', 'click', () => copyPrompt('proposals'));
-    on('btnPromptParagraphs', 'click', () => copyPrompt('paragraphs'));
     on('btnPublishGist', 'click', () => { hidePublishMenu(); publishToGist(); });
     on('btnPublishGitverse', 'click', () => { hidePublishMenu(); publishToGitverse(); });
     on('btnLoadGist', 'click', showLoadModal);
-    on('btnOpenFile', 'click', () => els.xmlFileInput.click());
     on('btnSaveFile', 'click', saveToFile);
-    on('btnPublish', 'click', (e) => { e.stopPropagation(); toggleMenu(els.publishMenu, els.deepseekMenu); });
+    on('btnPublish', 'click', (e) => { e.stopPropagation(); toggleMenu(els.publishMenu, null); });
     on('btnSettings', 'click', showSettingsModal);
     on('btnCopyGistUrl', 'click', copyGistUrl);
     on('btnOpenTask', 'click', openTask);
     on('btnCopyXml', 'click', copyXml);
     on('btnApplyXml', 'click', applyXmlChanges);
-    on('btnAskDeepSeek', 'click', (e) => { e.stopPropagation(); askDeepSeek(defaultDsMode()); });
-    on('btnDsParagraphs', 'click', (e) => { e.stopPropagation(); hideMenus(); askDeepSeek('paragraphs'); });
-    on('btnDsProposals', 'click', (e) => { e.stopPropagation(); hideMenus(); askDeepSeek('proposals'); });
+    on('btnAskDeepSeek', 'click', () => askDeepSeek(currentDsMode()));
     on('btnPickAutoSaveFile', 'click', pickAutoSaveFile);
 
-    els.xmlFileInput.addEventListener('change', (e) => loadXmlFromFile(e.target));
+    // Панель промпта под окном XML: выбор режима и копирование активного промпта
+    els.btnModeProposals.addEventListener('click', () => setDsMode('proposals'));
+    els.btnModeParagraphs.addEventListener('click', () => setDsMode('paragraphs'));
+    on('btnCopyPrompt', 'click', () => copyPrompt(currentDsMode()));
 
     // Редактор фрагмента
     els.timeExcellent.addEventListener('input', updateFragmentFromInputs);
@@ -133,9 +136,9 @@ function bindEvents() {
         updateXmlOutput();
     });
 
-    // Меню (публикация / DeepSeek) — закрытие по клику вне кнопок и самих меню
+    // Меню публикации — закрытие по клику вне кнопок и самого меню
     document.addEventListener('click', (e) => {
-        if (e.target.closest('#btnPublish') || e.target.closest('#btnAskDeepSeek') || e.target.closest('.publish-menu')) return;
+        if (e.target.closest('#btnPublish') || e.target.closest('.publish-menu')) return;
         hideMenus();
     });
 }
@@ -190,7 +193,23 @@ function getDeepseekToken() { return document.getElementById('deepseekToken').va
 function getGitverseToken() { return document.getElementById('gitverseToken').value.trim(); }
 function autoSaveEnabled() { return els.autoSaveToggle.checked; }
 function autoSaveDelayMs() { return parseInt(els.saveInterval.value, 10) || AUTOSAVE_DEBOUNCE_MS; }
-function defaultDsMode() { return localStorage.getItem(LS.dsMode) || 'paragraphs'; }
+
+// Активный режим DeepSeek (proposals | paragraphs) хранится в localStorage
+function currentDsMode() { return localStorage.getItem(LS.dsMode) || 'paragraphs'; }
+function setDsMode(mode) {
+    localStorage.setItem(LS.dsMode, mode);
+    renderModeSwitch();
+}
+
+// Подсветка активного режима и показ текста промпта в панели под окном XML
+function renderModeSwitch() {
+    const mode = currentDsMode();
+    els.btnModeProposals.classList.toggle('active', mode === 'proposals');
+    els.btnModeParagraphs.classList.toggle('active', mode === 'paragraphs');
+    els.btnModeProposals.setAttribute('aria-checked', String(mode === 'proposals'));
+    els.btnModeParagraphs.setAttribute('aria-checked', String(mode === 'paragraphs'));
+    els.promptText.textContent = DS_PROMPTS[mode] || DS_PROMPTS.paragraphs;
+}
 
 // ============================================================
 // XML: парсинг и генерация
@@ -598,28 +617,6 @@ function copyXml() {
 }
 
 // ============================================================
-// Загрузка XML из файла
-// ============================================================
-function loadXmlFromFile(input) {
-    const file = input.files && input.files[0];
-    input.value = '';
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        const xml = e.target.result;
-        els.xmlEditor.value = xml;
-        if (!parseXmlToData(xml)) return;
-        state.currentFragmentIndex = 0;
-        renderFragment();
-        updateXmlOutput({ immediate: true });
-        showToast(`Загружен файл «${file.name}»`);
-    };
-    reader.onerror = () => showToast('Не удалось прочитать файл', true);
-    reader.readAsText(file);
-}
-
-// ============================================================
 // Сохранение на диск (File System Access API + fallback)
 // ============================================================
 function suggestedFileName() {
@@ -679,7 +676,6 @@ function toggleMenu(menu, otherMenu) {
 function hidePublishMenu() { els.publishMenu.classList.add('hidden'); }
 function hideMenus() {
     els.publishMenu.classList.add('hidden');
-    els.deepseekMenu.classList.add('hidden');
 }
 
 // Публикация в Gist: если GIST уже привязан — обновляем его, иначе создаём новый
@@ -825,7 +821,10 @@ async function publishToGitverse(opts = {}) {
             existingBlob = info.blob_id || info.sha || null;
             if (info.branch) branch = info.branch;
         } else if (resFile.status !== 404) {
-            throw new Error(await describeHttpError(resFile));
+            // не 404 — попробуем прочитать описание ошибки; если тело недоступно — бросаем статус
+            let detail = '';
+            try { detail = await describeHttpError(resFile); } catch (e2) { /* ignore */ }
+            throw new Error(`HTTP ${resFile.status}${detail ? ': ' + detail : ''}`);
         }
 
         // 3. Создать или обновить файл
@@ -861,6 +860,7 @@ function btoaUtf8(str) {
 }
 
 async function describeHttpError(res) {
+    if (!res || typeof res.text !== 'function') return res && res.status ? `HTTP ${res.status}` : '';
     let detail = '';
     try {
         const text = await res.text();
@@ -992,7 +992,7 @@ function extractXmlFromText(text) {
 
 async function askDeepSeek(mode) {
     localStorage.setItem(LS.dsMode, mode);
-    hideMenus();
+    renderModeSwitch();
 
     const token = getDeepseekToken();
     const xml = els.xmlEditor.value || generateXml();
