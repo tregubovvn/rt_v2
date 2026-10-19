@@ -39,14 +39,17 @@ const state = {
         paragraphs: 'Работай с XML-заданием ниже в режиме АБЗАЦЕВ: улучши/сгенерируй тексты фрагментов (<text> внутри <fragment>), сохраняя структуру XML, количество и содержимое вопросов неизменными.',
         proposals: 'Работай с XML-заданием ниже в режиме ПРЕДЛОЖЕНИЙ: проверь/улучши вопросы и предложения (question/options/answer) на основе текстов фрагментов, сохраняя структуру XML.',
     },
-    dirty: false,               // есть несохранённые изменения
+    dirty: false,               // есть несохранённые изменения в задании
     isSaving: false,
     needsAnotherSave: false,
-    skipNextAutoSave: false,
     syncTimeout: null,
     autoSaveTimeout: null,
     fileHandle: null,           // FileSystemFileHandle для автосохранения на диск
 };
+
+// Флаг «изменение идёт из XML-панели» — XML-поле само является источником данных,
+// его input НЕ должен вызывать пересинхронизацию редактор -> XML (рекурсия).
+let applyingXmlToEditor = false;
 
 // Отладочный доступ к состоянию из консоли браузера (window.editorState.state)
 window.editorState = { state, api: {} };
@@ -80,12 +83,13 @@ function cacheElements() {
         'questionsContainer', 'fragmentTabs', 'prevBtn', 'nextBtn',
         'statusText', 'toast', 'gistLinkContainer', 'publishedTaskLink',
         'loadModal', 'loadGistId', 'settingsModal', 'metaModal',
-        'autoSaveToggle', 'saveInterval', 'autoSaveFolderName',
         'publishMenu', 'promptBar', 'promptText',
         'btnModeProposals', 'btnModeParagraphs', 'btnCopyPrompt', 'btnReloadPrompt',
     ];
     els = {};
     ids.forEach(id => { els[id] = document.getElementById(id); });
+    // Элементы вне стандартного списка (переключатель автосохранения в верхней панели)
+    els.autoSaveToggle = document.getElementById('autoSaveToggle');
 }
 
 function bindEvents() {
@@ -99,11 +103,8 @@ function bindEvents() {
     on('btnCopyXml', 'click', copyXml);
     on('btnApplyXml', 'click', applyXmlChanges);
     on('btnAskDeepSeek', 'click', () => askDeepSeek(currentDsMode()));
-    on('btnPickAutoSaveFile', 'click', pickAutoSaveFile);
 
-    // Ссылка на задание: в панели промпта (под XML) и в строке темы (над навигацией)
-    on('btnCopyGistUrl', 'click', copyTaskUrl);
-    on('btnOpenTask', 'click', openTask);
+    // Ссылка на задание — в строке темы (над навигацией по фрагментам)
     on('btnCopyTaskUrl', 'click', copyTaskUrl);
     on('btnOpenTaskTop', 'click', openTask);
 
@@ -131,8 +132,13 @@ function bindEvents() {
     on('btnAddChoiceQuestion', 'click', () => addQuestion('choice'));
     on('btnAddInputQuestion', 'click', () => addQuestion('input'));
 
-    // XML-панель (ручное редактирование)
-    els.xmlEditor.addEventListener('input', scheduleAutoSave);
+    // XML-панель (ручное редактирование): изменения идут из XML — автосохраняем
+    // на диск, но НЕ пересинхронизируем редактор -> XML (иначе рекурсия и потеря фокуса).
+    els.xmlEditor.addEventListener('input', () => {
+        if (applyingXmlToEditor) return;
+        state.dirty = true;
+        scheduleAutoSave();
+    });
 
     // Модальные окна
     on('btnLoadCancel', 'click', hideLoadModal);
@@ -145,12 +151,14 @@ function bindEvents() {
         if (e.key === 'Escape') { hideLoadModal(); hideSettingsModal(); hideMetaModal(); hidePublishMenu(); }
     });
 
-    // Поля настроек (токены, автосохранение)
+    // Поля настроек (токены) + переключатель автосохранения в верхней панели
     ['githubToken', 'deepseekToken', 'gitverseToken'].forEach(id => {
         document.getElementById(id).addEventListener('change', saveSettings);
     });
-    els.autoSaveToggle.addEventListener('change', () => { saveSettings(); setStatus(autoSaveEnabled() ? 'Автосохранение включено' : 'Автосохранение выключено'); });
-    els.saveInterval.addEventListener('change', saveSettings);
+    els.autoSaveToggle.addEventListener('change', () => {
+        saveSettings();
+        setStatus(autoSaveEnabled() ? 'Автосохранение на диск включено' : 'Автосохранение выключено');
+    });
 
     // Поля метаданных теста (окно «Метаданные теста»)
     ['author', 'university', 'discipline', 'audience'].forEach(id => {
@@ -178,8 +186,6 @@ function loadSettings() {
     document.getElementById('deepseekToken').value = localStorage.getItem(LS.dsToken) || '';
     document.getElementById('gitverseToken').value = localStorage.getItem(LS.gvToken) || '';
     els.autoSaveToggle.checked = localStorage.getItem(LS.autoSave) === '1';
-    els.saveInterval.value = localStorage.getItem('editor_autosave_interval') || String(AUTOSAVE_DEBOUNCE_MS);
-    els.autoSaveFolderName.value = localStorage.getItem('editor_autosave_filename') || '';
 
     try {
         const meta = JSON.parse(localStorage.getItem(LS.meta) || '{}');
@@ -200,8 +206,6 @@ function saveSettings() {
     localStorage.setItem(LS.dsToken, document.getElementById('deepseekToken').value.trim());
     localStorage.setItem(LS.gvToken, document.getElementById('gitverseToken').value.trim());
     localStorage.setItem(LS.autoSave, els.autoSaveToggle.checked ? '1' : '0');
-    localStorage.setItem('editor_autosave_interval', els.saveInterval.value);
-    localStorage.setItem('editor_autosave_filename', els.autoSaveFolderName.value.trim());
     localStorage.setItem(LS.meta, JSON.stringify(state.meta));
 }
 
@@ -217,7 +221,7 @@ function getGithubToken() { return document.getElementById('githubToken').value.
 function getDeepseekToken() { return document.getElementById('deepseekToken').value.trim(); }
 function getGitverseToken() { return document.getElementById('gitverseToken').value.trim(); }
 function autoSaveEnabled() { return els.autoSaveToggle.checked; }
-function autoSaveDelayMs() { return parseInt(els.saveInterval.value, 10) || AUTOSAVE_DEBOUNCE_MS; }
+function autoSaveDelayMs() { return AUTOSAVE_DEBOUNCE_MS; }
 
 // Активный режим DeepSeek (proposals | paragraphs) хранится в localStorage
 function currentDsMode() { return localStorage.getItem(LS.dsMode) || 'paragraphs'; }
@@ -397,10 +401,11 @@ function newFragment() {
 }
 
 // ============================================================
-// Синхронизация данных -> XML-панель + автосохранение
+// Синхронизация данных -> XML-панель + автосохранение на диск.
+// Автосохранение срабатывает ТОЛЬКО при изменениях в задании
+// (редактор фрагментов / применение XML / ответ DeepSeek) — см. markTaskChanged().
 // ============================================================
 function updateXmlOutput(opts = {}) {
-    state.dirty = true;
     clearTimeout(state.syncTimeout);
     const sync = () => {
         // Пока пользователь редактирует XML-панель — не перезаписываем её содержимое,
@@ -410,18 +415,38 @@ function updateXmlOutput(opts = {}) {
     };
     if (opts.immediate || opts.force) sync();
     else state.syncTimeout = setTimeout(sync, 100);
+
+    // Изменение В ЗАДАНИИ: помечаем как несохранённое и запускаем автосохранение
+    if (!opts.silent) markTaskChanged();
+}
+
+// Единственная точка «в задании есть изменения»: dirty + автосохранение/предложение сохранить
+function markTaskChanged() {
+    state.dirty = true;
     scheduleAutoSave();
 }
 
 function scheduleAutoSave() {
-    if (!autoSaveEnabled()) return;
-    if (state.skipNextAutoSave) { state.skipNextAutoSave = false; return; }
+    if (!autoSaveEnabled()) {
+        // Автосохранение выключено — предлагаем сохранить файл вручную (один раз за сессию правок)
+        showSaveHint(true);
+        return;
+    }
     setStatus('Автосохранение на диск…');
     clearTimeout(state.autoSaveTimeout);
     state.autoSaveTimeout = setTimeout(() => {
         state.autoSaveTimeout = null;
         autoSaveToDisk();
     }, autoSaveDelayMs());
+}
+
+// Подсветка кнопки «Сохранить в файл» + статусное предложение сохранить
+function showSaveHint(show) {
+    const btn = document.getElementById('btnSaveFile');
+    if (btn) btn.classList.toggle('save-hint', !!show && state.dirty);
+    if (show && !autoSaveEnabled() && state.dirty) {
+        setStatus('Задание изменено — нажмите «💾 Сохранить в файл», чтобы записать его на диск');
+    }
 }
 
 // Автосохранение выполняется ТОЛЬКО на диск компьютера (в выбранный файл).
@@ -432,37 +457,17 @@ async function autoSaveToDisk() {
         if (state.fileHandle && await ensureFilePermission(state.fileHandle)) {
             await writeFileHandle(state.fileHandle, content);
             state.dirty = false;
+            showSaveHint(false);
             setStatus('Автосохранено на диск: ' + state.fileHandle.name + ' в ' + new Date().toLocaleTimeString());
             return;
         }
         // Файл для автосохранения не выбран — обычное скачивание браузера
         downloadBlob(content, suggestedFileName(), 'Файл сохранён на диск (скачан): ');
         state.dirty = false;
+        showSaveHint(false);
     } catch (e) {
         setStatus('Ошибка автосохранения на диск: ' + e.message);
         showToast('Автосохранение: ' + e.message, true);
-    }
-}
-
-// Выбор постоянного файла для автосохранения (File System Access API)
-async function pickAutoSaveFile() {
-    if (!window.showSaveFilePicker) {
-        return showToast('Ваш браузер не поддерживает выбор файла для автосохранения (нужен Chrome/Edge). Используйте кнопку «Сохранить в файл».', true);
-    }
-    try {
-        const handle = await window.showSaveFilePicker({
-            suggestedName: suggestedFileName(),
-            types: [{ description: 'XML', accept: { 'text/xml': ['.xml'] } }],
-        });
-        state.fileHandle = handle;
-        els.autoSaveFolderName.value = handle.name;
-        saveSettings();
-        await writeFileHandle(handle, els.xmlEditor.value || generateXml());
-        state.dirty = false;
-        setStatus('Файл для автосохранения выбран: ' + handle.name);
-        showToast('Файл выбран, автосохранение будет писать в него');
-    } catch (e) {
-        if (e.name !== 'AbortError') showToast('Не удалось выбрать файл: ' + e.message, true);
     }
 }
 
@@ -680,10 +685,17 @@ function addQuestion(type) {
 }
 
 function applyXmlChanges() {
-    if (parseXmlToData(els.xmlEditor.value)) {
-        state.currentFragmentIndex = 0;
-        renderFragment();
-        showToast('XML применён');
+    applyingXmlToEditor = true;
+    try {
+        if (parseXmlToData(els.xmlEditor.value)) {
+            state.currentFragmentIndex = 0;
+            renderFragment();
+            // Информация из XML применена — предлагаем сохранить файл на диск
+            markTaskChanged();
+            showToast('XML применён. Не забудьте сохранить файл: «💾 Сохранить в файл»');
+        }
+    } finally {
+        applyingXmlToEditor = false;
     }
 }
 
@@ -762,26 +774,16 @@ function publishToGist() {
 
 function openExternal(url) { window.open(url, '_blank', 'noopener'); }
 
-// Ссылка на опубликованное задание — показывается в двух местах:
-// 1) в строке темы (над кнопками Предыдущий/Следующий), 2) в панели промпта под окном XML
+// Ссылка на опубликованное задание — показывается в строке темы
+// (над кнопками Предыдущий/Следующий): ссылка + копировать + открыть.
 function updateGistLinkDisplay() {
     const link = buildTaskUrl();
-    // Строка темы
     if (link) {
         els.publishedTaskLink.href = link;
         els.publishedTaskLink.textContent = link;
         els.gistLinkContainer.classList.remove('hidden');
     } else {
         els.gistLinkContainer.classList.add('hidden');
-    }
-    // Панель промпта (ссылка на GIST-страницу задания)
-    const promptLink = document.getElementById('gistLinkText');
-    if (promptLink) {
-        const pageUrl = state.lastPublishTarget === 'gitverse'
-            ? `https://gitverse.ru/${state.gitverseProject || ''}`
-            : (state.gistUrl || '');
-        promptLink.href = pageUrl || '#';
-        promptLink.textContent = pageUrl || 'не опубликовано';
     }
 }
 
@@ -842,12 +844,15 @@ function showPublishedLink(title, link) {
     if (link && navigator.clipboard) navigator.clipboard.writeText(link).catch(() => {});
 }
 
+// ============================================================
+// Публикация на сервис (GitHub Gist / GitVerse) — только по кнопке.
+// saveToGist вызывается из «Открыть задание» для синхронизации перед открытием.
+// ============================================================
 async function saveToGist(opts = {}) {
     const token = getGithubToken();
     if (!state.gistId || !token) return;
     if (state.isSaving) { state.needsAnotherSave = true; return; }
     state.isSaving = true;
-    state.autoSaveTimeout = null;
 
     setStatus('Сохранение в GIST…');
     try {
@@ -864,22 +869,18 @@ async function saveToGist(opts = {}) {
 
         const fd = data.files[state.gistFilename];
         if (fd && fd.raw_url) state.rawUrl = fd.raw_url;
-        state.dirty = false;
-        setStatus('Сохранено в GIST в ' + new Date().toLocaleTimeString());
+        // Публикация не сбрасывает «несохранённость» файла на диске:
+        // dirty остаётся, пока изменения не записаны на диск.
+        setStatus('Обновлено в GIST в ' + new Date().toLocaleTimeString());
         if (!opts.silent) showPublishedLink('Обновлено в GIST', buildTaskUrl());
     } catch (e) {
-        if (String(e.message).toLowerCase().includes('blocked')) {
-            setStatus('GIST занят, повторная попытка…');
-            scheduleAutoSave();
-        } else {
-            setStatus('Ошибка сохранения: ' + e.message);
-            showToast('Сохранение не удалось: ' + e.message, true);
-        }
+        setStatus('Ошибка сохранения в GIST: ' + e.message);
+        if (!opts.silent) showToast('Публикация не удалась: ' + e.message, true);
     } finally {
         state.isSaving = false;
         if (state.needsAnotherSave) {
             state.needsAnotherSave = false;
-            scheduleAutoSave();
+            saveToGist(opts);
         }
     }
 }
@@ -945,7 +946,6 @@ async function publishToGitverse(opts = {}) {
         state.gitverseProject = project;
         state.gitverseRawUrl = `https://gitverse.ru/${project}/raw/branch/${branch}/${encodeURIComponent(fileName)}`;
         state.lastPublishTarget = 'gitverse';
-        state.dirty = false;
         updateGistLinkDisplay();
         // Ссылка на задание: приложение RE:AD открывает XML по raw-ссылке GitVerse
         const taskLink = TASK_APP_BASE_URL + '?file=' + encodeURIComponent(state.gitverseRawUrl);
