@@ -45,6 +45,7 @@ const state = {
     syncTimeout: null,
     autoSaveTimeout: null,
     fileHandle: null,           // FileSystemFileHandle выбранного файла на диске
+    loadedFileName: null,       // имя загруженного с диска файла (для сохранения через скачивание)
     aiBusy: false,              // идёт запрос к DeepSeek (интерфейс заблокирован)
 };
 
@@ -70,7 +71,7 @@ document.addEventListener('DOMContentLoaded', () => {
     bindEvents();
     // Отладочный доступ к функциям (все объявления подняты — можно ссылаться)
     Object.assign(window.editorState.api, {
-        publishToGist, publishToGitverse, saveToFile, askDeepSeek, setDsMode, currentDsMode,
+        publishToGist, publishToGitverse, saveToFile, loadFromDiskFile, askDeepSeek, setDsMode, currentDsMode,
         generateXml, parseXmlToData, loadPromptsFromGists, buildDsPrompt,
         openTask, copyTaskUrl, showMetaModal, hideMetaModal, reloadActivePromptFromGist, savePromptEdit,
         addLocalPrompt, removePrompt, savePromptsToGist, getPromptsGistUrl,
@@ -113,6 +114,7 @@ function bindEvents() {
     on('btnPublishGist', 'click', () => { hidePublishMenu(); publishToGist(); });
     on('btnPublishGitverse', 'click', () => { hidePublishMenu(); publishToGitverse(); });
     on('btnLoadGist', 'click', showLoadModal);
+    on('btnLoadDiskFile', 'click', loadFromDiskFile);
     on('btnSaveFile', 'click', saveToFile);
     on('btnPublish', 'click', (e) => { e.stopPropagation(); toggleMenu(els.publishMenu, null); });
     on('btnSettings', 'click', showSettingsModal);
@@ -847,9 +849,99 @@ function suggestedFileName() {
     return base.endsWith('.xml') ? base : base + '.xml';
 }
 
+// ============================================================
+// Загрузка задания из файла на диске (File System Access API + fallback)
+// Открытый файл становится «рабочим»: дальнейшие сохранения (ручные и
+// автосохранение) пишутся именно в него, без повторных диалогов.
+// ============================================================
+async function loadFromDiskFile() {
+    let handle = null;
+    let content = null;
+    let fileName = null;
+
+    if (window.showOpenFilePicker) {
+        // Стандартный выбор файла через File System Access API — сразу
+        // получаем handle для последующей записи.
+        try {
+            [handle] = await window.showOpenFilePicker({
+                multiple: false,
+                types: [{ description: 'XML-задание', accept: { 'text/xml': ['.xml'], 'application/xml': ['.xml'] } }],
+            });
+        } catch (e) {
+            if (e && e.name === 'AbortError') return;  // пользователь отменил
+            // прочие ошибки — падаем на <input type=file>
+        }
+    }
+
+    if (!handle) {
+        // Firefox/Safari — обычный диалог открытия файла
+        const picked = await pickFileViaInput();
+        if (!picked) return;
+        content = picked.content;
+        fileName = picked.name;
+    } else {
+        if (!(await ensureFilePermission(handle, true))) {
+            return showToast('Нет доступа на запись к выбранному файлу', true);
+        }
+        const fileObj = await handle.getFile();
+        content = await fileObj.text();
+        fileName = handle.name;
+    }
+
+    if (!content || !content.trim()) {
+        return showToast('Файл пуст', true);
+    }
+
+    if (!parseXmlToData(content)) {
+        return; // parseXmlToData уже показал ошибку разбора
+    }
+
+    // Файл становится целевым для сохранений
+    state.fileHandle = handle;      // null в браузерах без FSAA — тогда сохранение через скачивание
+    state.loadedFileName = fileName;
+    state.currentFragmentIndex = 0;
+    renderFragment();
+    updateXmlOutput({ immediate: true });
+    state.dirty = false;
+    showSaveHint(false);
+    setStatus('Загружен файл: ' + fileName +
+        (handle ? ' — сохранения идут в него' : ' — сохранение будет через скачивание'));
+    showToast('Файл «' + fileName + '» загружен и назначен для сохранений');
+}
+
+//Fallback: стандартный <input type="file">
+function pickFileViaInput() {
+    return new Promise((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.xml,text/xml,application/xml';
+        input.style.display = 'none';
+        document.body.appendChild(input);
+        let settled = false;
+        const finish = (val) => {
+            if (settled) return;
+            settled = true;
+            input.remove();
+            resolve(val);
+        };
+        input.addEventListener('change', async () => {
+            const f = input.files && input.files[0];
+            if (!f) return finish(null);
+            finish({ name: f.name, content: await f.text() });
+        });
+        // Отмена диалога в некоторых браузерах отслеживается фокусом окна
+        const onFocus = () => setTimeout(() => {
+            if (!input.files || !input.files.length) finish(null);
+            window.removeEventListener('focus', onFocus);
+        }, 500);
+        window.addEventListener('focus', onFocus);
+        input.click();
+    });
+}
+
 async function saveToFile() {
     const content = els.xmlEditor.value || generateXml();
-    const fileName = suggestedFileName();
+    const fileName = state.loadedFileName || suggestedFileName();
 
     // Если файл на диске уже выбран — пишем прямо в него (стандартный механизм
     // File System Access API, без повторных диалогов)
