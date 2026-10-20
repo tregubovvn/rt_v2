@@ -20,8 +20,10 @@ const LS = {
     gvToken: 'gv_token',
     autoSave: 'editor_autosave_enabled',
     meta: 'editor_meta_json',          // author / university / discipline / audience (шаблон)
-    dsMode: 'editor_deepseek_mode',    // paragraphs | proposals
-    promptEdits: 'editor_ds_prompt_edits',   // отредактированные пользователем промпты
+    dsMode: 'editor_deepseek_mode',    // id активного промпта/режима
+    promptEdits: 'editor_ds_prompt_edits',   // отредактированные пользователем промпты {id: text}
+    promptsGist: 'editor_prompts_gist_url',  // единая ссылка на Gist со всеми промптами (MD)
+    lastSaveTime: 'editor_last_save_time',   // время последнего сохранения файла на диск
 };
 
 // --- Состояние ---
@@ -33,9 +35,10 @@ const state = {
     gistUrl: null,
     rawUrl: null,
     gistFilename: GIST_FILENAME,
-    // Активные промпты DeepSeek (по режимам). Тексты загружаются ТОЛЬКО
-    // из GitHub Gist (см. PROMPT_GIST_URLS); до загрузки — пустые строки.
-    dsPrompts: { paragraphs: '', proposals: '' },
+    // Все промпты DeepSeek: [{id, name, text, source:'gist'|'local'}].
+    // Загружаются из ОДНОГО GitHub Gist в MD-формате (см. DEFAULT_PROMPTS_GIST_URL);
+    // пользователь может добавить свои промпты и сохранить всё обратно в этот же Gist.
+    prompts: [],
     dirty: false,               // есть несохранённые изменения в задании
     isSaving: false,
     needsAnotherSave: false,
@@ -61,16 +64,18 @@ document.addEventListener('DOMContentLoaded', () => {
     parseXmlToData(els.xmlEditor.value);
     renderAll();
     updateXmlOutput({ immediate: true });
-    renderModeSwitch();
+    renderModeSelect();
+    updateLastSaveTimeLabel();
     initResizer();
     bindEvents();
     // Отладочный доступ к функциям (все объявления подняты — можно ссылаться)
     Object.assign(window.editorState.api, {
         publishToGist, publishToGitverse, saveToFile, askDeepSeek, setDsMode, currentDsMode,
-        generateXml, parseXmlToData, loadPromptsFromGists, buildDsPrompt, PROMPT_GIST_URLS,
+        generateXml, parseXmlToData, loadPromptsFromGists, buildDsPrompt,
         openTask, copyTaskUrl, showMetaModal, hideMetaModal, reloadActivePromptFromGist, savePromptEdit,
+        addLocalPrompt, removePrompt, savePromptsToGist, getPromptsGistUrl,
     });
-    loadPromptsFromGists();   // подгружаем тексты промптов с GitHub Gist
+    loadPromptsFromGists();   // подгружаем все промпты из единого Gist (MD)
 });
 
 function cacheElements() {
@@ -83,7 +88,11 @@ function cacheElements() {
         'loadModal', 'loadGistId', 'settingsModal', 'metaModal',
         'publishMenu', 'promptBar', 'promptText', 'publishCheckNote',
         'reviewPanel', 'reviewBody', 'reviewSummary', 'btnToggleReview',
-        'btnModeProposals', 'btnModeParagraphs', 'btnCopyPrompt', 'btnReloadPrompt',
+        'dsModeSelect', 'btnManagePrompts', 'btnEditPrompt', 'btnCopyPrompt', 'btnReloadPrompt',
+        'promptGistLink', 'lastSaveTimeLabel',
+        'promptsModal', 'promptList', 'newPromptName', 'btnAddPrompt', 'promptsGistUrl',
+        'btnReloadPrompts', 'btnSavePromptsToGist',
+        'promptEditorModal', 'promptEditorArea', 'promptEditorInfo',
     ];
     els = {};
     ids.forEach(id => { els[id] = document.getElementById(id); });
@@ -117,12 +126,30 @@ function bindEvents() {
     on('btnMetaDone', 'click', hideMetaModal);
     els.metaModal.addEventListener('click', (e) => { if (e.target === els.metaModal) hideMetaModal(); });
 
-    // Панель промпта под окном XML: выбор режима, копирование/редактирование промпта
-    els.btnModeProposals.addEventListener('click', () => setDsMode('proposals'));
-    els.btnModeParagraphs.addEventListener('click', () => setDsMode('paragraphs'));
+    // Панель промпта под окном XML: выбор режима (из единого Gist), редактор, копирование
+    els.dsModeSelect.addEventListener('change', () => setDsMode(els.dsModeSelect.value));
+    on('btnManagePrompts', 'click', showPromptsModal);
+    on('btnEditPrompt', 'click', openPromptEditor);
     on('btnCopyPrompt', 'click', () => copyPrompt(currentDsMode()));
     on('btnReloadPrompt', 'click', reloadActivePromptFromGist);
-    els.promptText.addEventListener('input', savePromptEdit);
+
+    // Окно «Промпты DeepSeek» (все промпты в одном Gist, MD-формат)
+    on('btnPromptsClose', 'click', hidePromptsModal);
+    on('btnPromptsDone', 'click', hidePromptsModal);
+    els.promptsModal.addEventListener('click', (e) => { if (e.target === els.promptsModal) hidePromptsModal(); });
+    on('btnAddPrompt', 'click', addLocalPrompt);
+    on('btnReloadPrompts', 'click', reloadAllPromptsFromGist);
+    on('btnSavePromptsToGist', 'click', savePromptsToGist);
+    els.promptsGistUrl.addEventListener('change', () => {
+        localStorage.setItem(LS.promptsGist, els.promptsGistUrl.value.trim());
+        updatePromptGistLink();
+    });
+
+    // Модальное окно текстового редактора активного промпта
+    on('btnPromptEditorClose', 'click', hidePromptEditor);
+    on('btnPromptEditorCancel', 'click', hidePromptEditor);
+    on('btnPromptEditorSave', 'click', savePromptFromEditor);
+    els.promptEditorModal.addEventListener('click', (e) => { if (e.target === els.promptEditorModal) hidePromptEditor(); });
 
     // Редактор фрагмента
     els.timeExcellent.addEventListener('input', updateFragmentFromInputs);
@@ -233,72 +260,87 @@ function getGitverseToken() { return document.getElementById('gitverseToken').va
 function autoSaveEnabled() { return els.autoSaveToggle.checked; }
 function autoSaveDelayMs() { return AUTOSAVE_DEBOUNCE_MS; }
 
-// Активный режим DeepSeek (proposals | paragraphs) хранится в localStorage
+// Активный режим DeepSeek = id промпта из state.prompts (paragraphs | proposals | custom-…)
 function currentDsMode() { return localStorage.getItem(LS.dsMode) || 'paragraphs'; }
 function setDsMode(mode) {
     localStorage.setItem(LS.dsMode, mode);
-    renderModeSwitch();
+    renderModeSelect();
 }
 
-// Подсветка активного режима и показ (редактируемого) текста промпта под окном XML
-function renderModeSwitch() {
-    const mode = currentDsMode();
-    els.btnModeProposals.classList.toggle('active', mode === 'proposals');
-    els.btnModeParagraphs.classList.toggle('active', mode === 'paragraphs');
-    els.btnModeProposals.setAttribute('aria-checked', String(mode === 'proposals'));
-    els.btnModeParagraphs.setAttribute('aria-checked', String(mode === 'paragraphs'));
-    // Не трогаем поле, пока пользователь его редактирует (фокус в textarea)
-    if (document.activeElement !== els.promptText) {
-        els.promptText.value = state.dsPrompts[mode] || state.dsPrompts.paragraphs;
+// Наполнение выпадающего списка режимов и показ текста активного промпта
+function renderModeSelect() {
+    const activeId = currentDsMode();
+    if (els.dsModeSelect) {
+        els.dsModeSelect.innerHTML = state.prompts
+            .map(p => `<option value="${escHtml(p.id)}"${p.id === activeId ? ' selected' : ''}>${escHtml(p.name)}</option>`)
+            .join('');
+        // Если активного id ещё нет в списке — выбираем первый доступный
+        if (state.prompts.length && !state.prompts.some(p => p.id === activeId)) {
+            els.dsModeSelect.selectedIndex = 0;
+            localStorage.setItem(LS.dsMode, state.prompts[0].id);
+        }
     }
-    updatePromptGistLink(mode);
+    const prompt = getPromptById(currentDsMode()) || state.prompts[0];
+    if (document.activeElement !== els.promptText) {
+        els.promptText.value = prompt ? prompt.text : '';
+    }
+    updatePromptGistLink();
 }
 
-// Сохранение отредактированного пользователем промпта (для активного режима)
-function savePromptEdit() {
-    const mode = currentDsMode();
-    state.dsPrompts[mode] = els.promptText.value;
+function getPromptById(id) {
+    return state.prompts.find(p => p.id === id) || null;
+}
+
+// Сохранение отредактированного пользователем промпта (для активного режима).
+// Правки живут локально (localStorage) до «Сохранить все в Gist».
+function savePromptEdit(text) {
+    const id = currentDsMode();
+    const p = getPromptById(id);
+    if (!p) return;
+    p.text = text;
     try {
         const edits = JSON.parse(localStorage.getItem(LS.promptEdits) || '{}');
-        edits[mode] = els.promptText.value;
+        edits[id] = text;
         localStorage.setItem(LS.promptEdits, JSON.stringify(edits));
     } catch (e) { /* повреждённые данные — пропускаем */ }
 }
 
-// Кнопка «↻ Gist» — перезагрузить активный промпт с GitHub Gist (отменяет правки)
+// Кнопка «↻ Gist» — перезагрузить активный промпт из единого Gist (отменяет локальные правки)
 async function reloadActivePromptFromGist() {
-    const mode = currentDsMode();
-    try {
-        setStatus('Загрузка промпта с Gist…');
-        const text = await fetchGistRaw(PROMPT_GIST_URLS[mode]);
-        if (!text.trim()) throw new Error('Пустой файл промпта');
-        state.dsPrompts[mode] = text.trim();
-        const edits = JSON.parse(localStorage.getItem(LS.promptEdits) || '{}');
-        delete edits[mode];
-        localStorage.setItem(LS.promptEdits, JSON.stringify(edits));
-        els.promptText.value = state.dsPrompts[mode];
-        setStatus('Промпт загружен с Gist');
-        showToast('Промпт обновлён из Gist (правки отменены)');
-    } catch (e) {
-        setStatus('Не удалось загрузить промпт: ' + e.message);
-        showToast('Загрузка промпта не удалась: ' + e.message, true);
+    const id = currentDsMode();
+    const p = getPromptById(id);
+    if (!p || p.source !== 'gist') {
+        showToast('Этот промпт локальный — перезагрузка из Gist недоступна', true);
+        return;
+    }
+    await loadPromptsFromGists({ only: id });
+    setStatus('Промпт обновлён из Gist');
+    showToast('Промпт «' + p.name + '» обновлён из Gist (правки отменены)');
+}
+
+// Ссылка на единый Gist со всеми промптами (под окном XML и в окне «Промпты»)
+function getPromptsGistUrl() {
+    return localStorage.getItem(LS.promptsGist) || DEFAULT_PROMPTS_GIST_URL;
+}
+
+function updatePromptGistLink() {
+    const link = els.promptGistLink;
+    if (!link) return;
+    const url = getPromptsGistUrl();
+    if (url) {
+        link.href = url;
+        link.textContent = 'Промпты на Gist ↗';
+        link.classList.remove('hidden');
+    } else {
+        link.classList.add('hidden');
     }
 }
 
-// Ссылка на Gist с активным промптом (рядом с текстом промпта, под окном XML)
-function updatePromptGistLink(mode) {
-    const link = document.getElementById('promptGistLink');
-    if (!link) return;
-    const url = PROMPT_GIST_URLS[mode] || '';
-    link.href = url;
-    link.textContent = 'Открыть промпт на GitHub Gist ↗';
-}
-
-// Полное сообщение для отправки в DeepSeek: промпт из Gist + XML из панели
+// Полное сообщение для отправки в DeepSeek: активный промпт + XML из панели
 function buildDsMessage(mode) {
-    const base = state.dsPrompts[mode] || state.dsPrompts.paragraphs;
+    const p = getPromptById(mode) || state.prompts[0];
     const xml = els.xmlEditor.value || generateXml();
-    return buildDsPrompt(base) + '\n\nXML-ЗАДАНИЕ:\n' + xml;
+    return buildDsPrompt(p ? p.text : '') + '\n\nXML-ЗАДАНИЕ:\n' + xml;
 }
 
 // ============================================================
@@ -1262,27 +1304,31 @@ async function loadFromGist() {
 }
 
 // ============================================================
-// DeepSeek: два режима — абзацы / предложения.
-// Сами промпты берутся из GitHub GIST (ссылки ниже): они
-// скачиваются при открытии редактора и показываются в панели
-// под окном XML; именно они отправляются в DeepSeek.
+// Промпты DeepSeek — универсальная работа.
+// Все промпты (включая добавленные пользователем) хранятся в ОДНОМ
+// GitHub Gist в формате Markdown: каждый промпт — секция «## Название».
+// Режимы DeepSeek = промпты из этого списка; пользователь может добавить свои.
 // Текст берётся из окна XML, результат возвращается в окно XML.
 // Без токена: копируем промпт+XML и открываем чат DeepSeek.
 // ============================================================
 
-// Ссылки на промпты в GitHub Gist (режим «Абзацы» / режим «Предложения»)
-const PROMPT_GIST_URLS = {
-    // «Промпт для создания заданий READ» (тексты абзацев → структура задания)
-    paragraphs: 'https://gist.github.com/tregubovvn/e837aa6949f0b20dee3925983ba2f424',
-    // «Промпт для проверки готового задания READ» (вопросы/предложения)
-    proposals: 'https://gist.github.com/tregubovvn/61c8a72e42d33dbdccf81d42cfda87f2',
-};
+// Ссылка на единый Gist со всеми промптами (MD). Можно переопределить в окне «📝 Промпты…».
+const DEFAULT_PROMPTS_GIST_URL = 'https://gist.github.com/tregubovvn/2f9804a3ad5439b1bb60957b8969826a';
+
+// Встроенные (дефолтные) режимы — используются как заготовки, если в Gist
+// соответствующих секций нет; их тексты догружаются с отдельных gist'ов.
+const BUILTIN_PROMPTS = [
+    { id: 'paragraphs', name: 'Абзацы',
+      fallbackUrl: 'https://gist.github.com/tregubovvn/e837aa6949f0b20dee3925983ba2f424' },
+    { id: 'proposals', name: 'Предложения',
+      fallbackUrl: 'https://gist.github.com/tregubovvn/61c8a72e42d33dbdccf81d42cfda87f2' },
+];
 
 // Конец сообщения модели — этим блоком модель подтверждает, что задание
 // готово полностью; если его нет, просим модель продолжить.
 const READY_MARKER = '[RE:AD-TEST-READY]';
 
-// Добавляем к промпту из Gist технические требования к формату ответа
+// Добавляем к промпту технические требования к формату ответа
 function buildDsPrompt(basePrompt) {
     return (basePrompt || '').trim() + '\n\n' +
         'ТЕХНИЧЕСКИЕ ТРЕБОВАНИЯ К ОТВЕТУ:\n' +
@@ -1307,31 +1353,245 @@ async function fetchGistRaw(url) {
     return await rawRes.text();
 }
 
-// Загрузка обоих промптов из Gist. Пользовательские правки (promptEdits)
-// имеют приоритет над текстом с Gist; без сети и правок поле промпта остаётся
-// пустым — его можно загрузить кнопкой «↻ Gist» или ввести вручную.
-async function loadPromptsFromGists() {
+// --- MD-формат единого файла промптов -------------------------------------
+// Разбирает MD-текст на промпты по заголовкам верхнего уровня «## Название».
+// Первый заголовок уровня 1 (# ...) — название набора, игнорируется.
+function parsePromptsMarkdown(md) {
+    const list = [];
+    const lines = (md || '').split(/\r?\n/);
+    let cur = null;
+    for (const line of lines) {
+        const h = line.match(/^##\s+(.+?)\s*$/);
+        if (h) {
+            if (cur && cur.body.trim()) list.push(cur);
+            cur = { title: h[1].trim(), body: '' };
+            continue;
+        }
+        if (cur) cur.body += line + '\n';
+    }
+    if (cur && cur.body.trim()) list.push(cur);
+    return list.map(item => ({
+        id: promptIdFromTitle(item.title),
+        name: item.title,
+        text: item.body.trim(),
+        source: 'gist',
+    }));
+}
+
+// Генерирует единый MD-файл из текущего списка промптов (для сохранения в Gist)
+function buildPromptsMarkdown(prompts) {
+    const header = '# Промпты для редактора RE:AD\n\n' +
+        'Каждая секция «## Название» — отдельный промпт (режим DeepSeek).\n' +
+        'Редактируйте прямо здесь или в редакторе тестов кнопкой «📝 Промпты…» → «💾 Сохранить все в Gist».\n';
+    return header + prompts.map(p => '\n## ' + p.name + '\n\n' + (p.text || '(пусто)') + '\n').join('\n---\n');
+}
+
+// Стабильный id промпта по названию (кириллица разрешена)
+function promptIdFromTitle(title) {
+    const slug = (title || '').toLowerCase().trim().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '');
+    return slug || ('prompt-' + Math.random().toString(36).slice(2, 8));
+}
+
+// Загрузка ВСЕХ промптов из единого Gist (MD). Локальные правки (promptEdits)
+// имеют приоритет над текстом из Gist; локальные (пользовательские) промпты
+// всегда остаются в списке. opts.only — обновить только промпт с этим id.
+async function loadPromptsFromGists(opts = {}) {
     setStatus('Загрузка промптов с GitHub Gist…');
     let edits = {};
     try { edits = JSON.parse(localStorage.getItem(LS.promptEdits) || '{}'); } catch (e) { edits = {}; }
-    let loaded = 0, failed = 0;
-    for (const mode of ['paragraphs', 'proposals']) {
-        try {
-            const text = await fetchGistRaw(PROMPT_GIST_URLS[mode]);
-            if (text.trim()) { state.dsPrompts[mode] = text.trim(); loaded++; }
-        } catch (e) {
-            console.warn('Не удалось загрузить промпт (' + mode + '):', e);
-            failed++;
-        }
-        if (typeof edits[mode] === 'string' && edits[mode].trim()) {
-            state.dsPrompts[mode] = edits[mode];   // восстановленная пользовательская версия
+
+    const localPrompts = state.prompts.filter(p => p.source === 'local');
+    let gistPrompts = [];
+    try {
+        const md = await fetchGistRaw(getPromptsGistUrl());
+        gistPrompts = parsePromptsMarkdown(md);
+    } catch (e) {
+        console.warn('Не удалось загрузить единый Gist промптов:', e);
+    }
+
+    // Если в едином Gist нет встроенных режимов — догружаем их с fallback-ссылок
+    for (const b of BUILTIN_PROMPTS) {
+        if (!gistPrompts.some(p => p.id === b.id)) {
+            try {
+                const text = await fetchGistRaw(b.fallbackUrl);
+                if (text.trim()) gistPrompts.push({ id: b.id, name: b.name, text: text.trim(), source: 'gist' });
+            } catch (e) { /* сеть недоступна — режим останется с пустым текстом */ }
         }
     }
-    renderModeSwitch();
-    if (loaded === 2) setStatus('Готово: промпты загружены с Gist');
-    else if (loaded === 1) setStatus('Готово: загружен только один промпт с Gist (второй — «↻ Gist» или вручную)');
-    else if (failed) setStatus('Промпты с Gist не загрузились — нажмите «↻ Gist» или отредактируйте поле промпта вручную');
+
+    // Порядок: встроенные первыми (как привычные режимы), остальные — как в Gist
+    const ordered = [
+        ...BUILTIN_PROMPTS.map(b => gistPrompts.find(p => p.id === b.id)).filter(Boolean),
+        ...gistPrompts.filter(p => !BUILTIN_PROMPTS.some(b => b.id === p.id)),
+    ];
+
+    if (opts.only) {
+        // Обновляем только один промпт из Gist, всё остальное оставляем как есть
+        const fresh = ordered.find(p => p.id === opts.only);
+        if (fresh) {
+            const existing = getPromptById(opts.only);
+            if (existing) { existing.text = fresh.text; existing.name = fresh.name; existing.source = 'gist'; }
+            else state.prompts.push(fresh);
+        }
+    } else {
+        state.prompts = [...ordered, ...localPrompts];
+    }
+
+    // Восстанавливаем локальные правки поверх загруженных текстов
+    for (const p of state.prompts) {
+        if (typeof edits[p.id] === 'string' && edits[p.id].trim()) p.text = edits[p.id];
+    }
+
+    renderModeSelect();
+    if (!els.promptsModal.classList.contains('hidden')) renderPromptList();
+    const okCount = state.prompts.filter(p => p.text).length;
+    if (okCount === state.prompts.length && okCount > 0) setStatus('Готово: ' + okCount + ' промпт(ов) загружено из Gist');
+    else if (okCount > 0) setStatus('Готово: ' + okCount + ' из ' + state.prompts.length + ' промптов имеют текст («↻ Gist» или редактор промпта)');
+    else setStatus('Промпты с Gist не загрузились — нажмите «↻ Gist» или отредактируйте промпт вручную');
 }
+
+// Перезагрузка всех промптов из Gist (кнопка в окне «Промпты…») — отменяет правки
+async function reloadAllPromptsFromGist() {
+    localStorage.setItem(LS.promptEdits, '{}');   // отменяем локальные правки текстов
+    await loadPromptsFromGists();
+    renderPromptList();
+    showToast('Все промпты перезагружены из Gist');
+}
+
+// --- Окно «Промпты DeepSeek» ------------------------------------------------
+function showPromptsModal() {
+    els.promptsGistUrl.value = getPromptsGistUrl();
+    renderPromptList();
+    els.promptsModal.classList.add('show');
+}
+function hidePromptsModal() {
+    els.promptsModal.classList.remove('show');
+    renderModeSelect();
+}
+
+function renderPromptList() {
+    els.promptList.innerHTML = state.prompts.map(p => `
+        <li class="prompt-item${p.id === currentDsMode() ? ' active' : ''}" data-id="${escHtml(p.id)}">
+            <div class="prompt-item-main">
+                <span class="prompt-item-name">${p.source === 'gist' ? '☁' : '📝'} ${escHtml(p.name)}</span>
+                <span class="prompt-item-meta">${p.source === 'gist' ? 'из Gist' : 'локальный'} · ${(p.text || '').length} симв.</span>
+            </div>
+            <div class="prompt-item-actions">
+                <button type="button" class="btn btn-sm btn-ghost" data-action="edit" title="Открыть в текстовом редакторе">✎</button>
+                ${p.source === 'local' ? '<button type="button" class="btn btn-sm btn-ghost" data-action="remove" title="Удалить локальный промпт">✕</button>' : ''}
+            </div>
+        </li>`).join('') || '<li class="hint">Промпты не загружены — «↻ Загрузить из Gist».</li>';
+
+    els.promptList.querySelectorAll('.prompt-item').forEach(li => {
+        const id = li.dataset.id;
+        li.addEventListener('click', (e) => {
+            const action = e.target.closest('[data-action]')?.dataset.action;
+            if (action === 'edit') { setDsMode(id); openPromptEditor(); return; }
+            if (action === 'remove') { removePrompt(id); return; }
+            setDsMode(id);          // выбор режима кликом по строке
+            renderPromptList();
+        });
+    });
+}
+
+// Добавление своего (локального) промпта
+function addLocalPrompt() {
+    const name = els.newPromptName.value.trim();
+    if (!name) { showToast('Введите название промпта', true); return; }
+    let id = promptIdFromTitle(name);
+    if (getPromptById(id)) id = id + '-' + Date.now().toString(36);
+    state.prompts.push({ id, name, text: '', source: 'local' });
+    els.newPromptName.value = '';
+    setDsMode(id);
+    renderPromptList();
+    openPromptEditor();   // сразу предлагаем написать текст
+    showToast('Промпт «' + name + '» добавлен. Напишите его текст и сохраните.');
+}
+
+function removePrompt(id) {
+    const idx = state.prompts.findIndex(p => p.id === id);
+    if (idx === -1) return;
+    const [removed] = state.prompts.splice(idx, 1);
+    const edits = JSON.parse(localStorage.getItem(LS.promptEdits) || '{}');
+    delete edits[id];
+    localStorage.setItem(LS.promptEdits, JSON.stringify(edits));
+    if (currentDsMode() === id) setDsMode(state.prompts[0]?.id || 'paragraphs');
+    renderPromptList();
+    renderModeSelect();
+    showToast('Промпт «' + removed.name + '» удалён');
+}
+
+// Сохранение ВСЕХ промптов обратно в тот же самый Gist (MD-файл)
+async function savePromptsToGist() {
+    const token = getGithubToken();
+    if (!token) { showToast('Нужен GitHub Token (⚙ Настройки)', true); return; }
+    const url = els.promptsGistUrl.value.trim() || getPromptsGistUrl();
+    const md = buildPromptsMarkdown(state.prompts);
+    setStatus('Сохранение промптов в Gist…');
+    try {
+        const gistIdMatch = url.match(/(?:gist\.github\.com|gist\.githubusercontent\.com)\/(?:[^/\s]+\/)?([0-9a-f]{7,})/i);
+        let res;
+        if (gistIdMatch) {
+            // Обновляем существующий Gist: заменяем MD-файл (или добавляем новый)
+            const cur = await (await fetch('https://api.github.com/gists/' + gistIdMatch[1], {
+                headers: { Authorization: `Bearer ${token}` },
+            })).json();
+            const oldFilename = Object.keys(cur.files || {})[0] || 'prompts.md';
+            res = await fetch('https://api.github.com/gists/' + gistIdMatch[1], {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ files: { 'prompts.md': { content: md }, ...(oldFilename !== 'prompts.md' ? { [oldFilename]: null } : {}) } }),
+            });
+        } else {
+            // Новый Gist — создаём и запоминаем ссылку
+            res = await fetch('https://api.github.com/gists', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ description: 'Промпты для редактора RE:AD', public: false, files: { 'prompts.md': { content: md } } }),
+            });
+        }
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error((err.message) || 'HTTP ' + res.status);
+        }
+        const data = await res.json();
+        const newUrl = data.html_url || url;
+        localStorage.setItem(LS.promptsGist, newUrl);
+        els.promptsGistUrl.value = newUrl;
+        updatePromptGistLink();
+        // После записи в Gist локальные правки больше не нужны — текст уже там
+        localStorage.setItem(LS.promptEdits, '{}');
+        state.prompts.forEach(p => { if (p.source === 'local') p.source = 'gist'; });
+        renderPromptList();
+        setStatus('Промпты сохранены в Gist: ' + newUrl);
+        showToast('Все промпты сохранены в Gist');
+    } catch (e) {
+        setStatus('Ошибка сохранения промптов: ' + e.message);
+        showToast('Сохранение промптов: ' + e.message, true);
+    }
+}
+
+// --- Модальное окно текстового редактора активного промпта ------------------
+function openPromptEditor() {
+    const p = getPromptById(currentDsMode());
+    if (!p) { showToast('Сначала выберите или добавьте промпт', true); return; }
+    els.promptEditorArea.value = p.text || '';
+    els.promptEditorInfo.textContent =
+        'Промпт: «' + p.name + '» (' + (p.source === 'gist' ? 'из Gist' : 'локальный') + '). ' +
+        'Правка сохраняется в браузере; чтобы записать её в Gist — «📝 Промпты…» → «💾 Сохранить все в Gist».';
+    els.promptEditorModal.classList.add('show');
+    els.promptEditorArea.focus();
+}
+function hidePromptEditor() { els.promptEditorModal.classList.remove('show'); }
+
+function savePromptFromEditor() {
+    savePromptEdit(els.promptEditorArea.value);
+    renderModeSelect();
+    if (!els.promptsModal.classList.contains('hidden')) renderPromptList();
+    hidePromptEditor();
+    showToast('Промпт сохранён (локально). Для записи в Gist — «💾 Сохранить все в Gist»');
+}
+
 
 function extractXmlFromText(text) {
     if (!text) return '';
@@ -1361,32 +1621,59 @@ async function deepseekChat(token, messages) {
     return reply;
 }
 
-// Индикатор прогресса в статусной строке (анимированная точка + текст этапа)
+// Индикатор прогресса: статусная строка + «живое» оверлей-окно (см. setUiBusy)
 let aiProgressTimer = null;
+let aiElapsedTimer = null;
 let aiProgressDots = 0;
+let aiStartedAt = 0;
+
+function fmtElapsed(ms) {
+    const s = Math.floor(ms / 1000);
+    return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+}
+
+// Обновление содержимого оверлея (таймер, этап, пульсирующие точки)
+function renderAiOverlay() {
+    const box = document.getElementById('aiOverlayStage');
+    if (!box) return;
+    const el = document.getElementById('aiOverlayElapsed');
+    if (el && aiStartedAt) el.textContent = fmtElapsed(Date.now() - aiStartedAt);
+    box.textContent = els.statusText.textContent.replace(/\s*[·]+\s*$/, '');
+    const dots = document.getElementById('aiOverlayDots');
+    if (dots) dots.textContent = '·'.repeat(aiProgressDots % 4) || ' ';
+}
+
 function setAiProgress(text) {
     setStatus((text || 'DeepSeek: обработка…') + ' ' + '·'.repeat(aiProgressDots % 4));
+    renderAiOverlay();
 }
 function startAiProgress() {
     stopAiProgress();
     aiProgressDots = 0;
+    aiStartedAt = Date.now();
     setAiProgress('Отправка запроса в DeepSeek');
     aiProgressTimer = setInterval(() => {
         aiProgressDots++;
         // обновляем только точки, не трогая текст, заданный externally
         const base = els.statusText.textContent.replace(/\s*[·]+\s*$/, '');
         setStatus(base + ' ' + '·'.repeat(aiProgressDots % 4));
+        renderAiOverlay();
     }, 500);
+    aiElapsedTimer = setInterval(renderAiOverlay, 1000);
 }
 function updateAiStage(text) {
     if (!state.aiBusy) return;
     setStatus(text + ' ' + '·'.repeat(aiProgressDots % 4));
+    renderAiOverlay();
 }
 function stopAiProgress() {
     if (aiProgressTimer) { clearInterval(aiProgressTimer); aiProgressTimer = null; }
+    if (aiElapsedTimer) { clearInterval(aiElapsedTimer); aiElapsedTimer = null; }
 }
 
-// Блокировка/разблокировка интерфейса на время обращения к DeepSeek
+// Блокировка/разблокировка интерфейса на время обращения к DeepSeek.
+// Окно ожидания сделано выразительным: градиентная карточка, «орбита» со
+// спутником вместо обычного спиннера, живой таймер и смена этапов запроса.
 function setUiBusy(busy, reasonText) {
     state.aiBusy = busy;
     document.body.classList.toggle('ai-busy', busy);
@@ -1398,16 +1685,20 @@ function setUiBusy(busy, reasonText) {
             overlay.className = 'ai-overlay';
             overlay.innerHTML =
                 '<div class="ai-overlay-box">' +
-                '<div class="spinner" aria-hidden="true"></div>' +
-                '<div class="ai-overlay-text" id="aiOverlayText">DeepSeek обрабатывает задание…</div>' +
-                '<div class="ai-overlay-hint">Интерфейс заблокирован до получения ответа. Это может занять несколько минут.</div>' +
+                '<div class="ai-orbit" aria-hidden="true">' +
+                '<span class="ai-core">✨</span>' +
+                '<span class="ai-satellite"></span>' +
+                '<span class="ai-ring ai-ring-1"></span>' +
+                '<span class="ai-ring ai-ring-2"></span>' +
+                '</div>' +
+                '<div class="ai-overlay-title">DeepSeek думает<span class="ai-dots"><span>.</span><span>.</span><span>.</span></span></div>' +
+                '<div class="ai-overlay-text" id="aiOverlayStage">Отправка запроса…</div>' +
+                '<div class="ai-overlay-timer-row">Прошло времени: <span class="ai-timer" id="aiOverlayElapsed">00:00</span><span id="aiOverlayDots"></span></div>' +
+                '<div class="ai-overlay-hint">Интерфейс заблокирован до получения ответа — глубокие задания могут занять несколько минут.</div>' +
                 '</div>';
             document.body.appendChild(overlay);
         }
-        if (reasonText) {
-            const t = document.getElementById('aiOverlayText');
-            if (t) t.textContent = reasonText;
-        }
+        renderAiOverlay();
     } else if (overlay) {
         overlay.remove();
     }
@@ -1421,16 +1712,16 @@ async function askDeepSeek(mode) {
     if (state.aiBusy) return;   // повторный клик во время обработки игнорируется
     mode = mode || currentDsMode();
     localStorage.setItem(LS.dsMode, mode);
-    renderModeSwitch();
+    renderModeSelect();
 
     const token = getDeepseekToken();
     const xml = els.xmlEditor.value || generateXml();
     if (!xml.trim()) return showToast('XML пуст', true);
 
-    // Промпт должен быть загружен из Gist — иначе просим загрузить
-    const promptBase = state.dsPrompts[mode];
-    if (!promptBase || !promptBase.trim()) {
-        showToast('Промпт для режима «' + (mode === 'proposals' ? 'Предложения' : 'Абзацы') + '» ещё не загружен с Gist — нажмите «↻ Gist»', true);
+    // Промпт должен быть загружен — иначе просим загрузить из Gist
+    const activePrompt = getPromptById(mode) || state.prompts[0];
+    if (!activePrompt || !activePrompt.text.trim()) {
+        showToast('Промпт «' + (activePrompt ? activePrompt.name : mode) + '» ещё не загружен — нажмите «↻ Gist»', true);
         reloadActivePromptFromGist();
         return;
     }
@@ -1444,9 +1735,9 @@ async function askDeepSeek(mode) {
         return;
     }
 
-    const modeName = mode === 'proposals' ? 'режим предложений' : 'режим абзацев';
+    const modeName = activePrompt.name;
     // Блокируем интерфейс и показываем прогресс на всё время обращения
-    setUiBusy(true, 'DeepSeek (' + modeName + '): обработка задания…');
+    setUiBusy(true, 'DeepSeek (промпт «' + modeName + '»): обработка задания…');
     startAiProgress();
     try {
         const messages = [{ role: 'user', content: buildDsMessage(mode) }];
@@ -1507,10 +1798,11 @@ async function askDeepSeek(mode) {
     }
 }
 
-// Кнопка «📋 Промпт» — копирует активный промпт (из Gist) в буфер обмена
+// Кнопка «📋 Копировать» — копирует активный промпт в буфер обмена
 async function copyPrompt(mode) {
+    const p = getPromptById(mode) || state.prompts[0];
     try {
-        await navigator.clipboard.writeText(state.dsPrompts[mode] || '');
+        await navigator.clipboard.writeText(p ? p.text : '');
         showToast('Промпт скопирован в буфер обмена');
     } catch (e) {
         showToast('Не удалось скопировать промпт', true);

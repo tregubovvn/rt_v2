@@ -18,11 +18,14 @@
             <div class="btn-group" role="group" aria-label="Файл">
                 <button type="button" class="btn" id="btnLoadGist" title="Загрузить задание из GitHub Gist">☁️ Загрузить из Gist</button>
                 <button type="button" class="btn btn-primary" id="btnSaveFile" title="Сохранить XML в файл на диск компьютера">💾 Сохранить в файл</button>
-                <label class="switch-inline" title="Автосохранение на диск при изменениях в задании (только в ранее выбранный файл)">
-                    <input type="checkbox" id="autoSaveToggle">
-                    <span class="switch-slider"></span>
-                    <span class="switch-caption">Автосохранение</span>
-                </label>
+                <div class="autosave-col">
+                    <label class="switch-inline" title="Автосохранение на диск при изменениях в задании (только в ранее выбранный файл)">
+                        <input type="checkbox" id="autoSaveToggle">
+                        <span class="switch-slider"></span>
+                        <span class="switch-caption">Автосохранение</span>
+                    </label>
+                    <span class="autosave-time hidden" id="lastSaveTimeLabel" title="Время последнего сохранения файла на диск"></span>
+                </div>
             </div>
 
             <div class="btn-group" role="group" aria-label="Публикация">
@@ -58,26 +61,28 @@
                 <span>XML</span>
                 <div class="flex-gap">
                     <button type="button" class="btn btn-sm" id="btnCopyXml" title="Копировать XML в буфер обмена">Копировать</button>
-                    <button type="button" class="btn btn-sm btn-ai" id="btnAskDeepSeek" title="Отправить XML из этого окна в DeepSeek (активный режим)">✨ DeepSeek</button>
+                    <button type="button" class="btn btn-sm btn-ai" id="btnAskDeepSeek" title="Отправить XML из этого окна в DeepSeek (активный режим)">✨ Отправить DeepSeek</button>
                     <button type="button" class="btn btn-sm btn-primary" id="btnApplyXml" title="Применить внесённые в XML изменения к редактору">Применить ▶</button>
                 </div>
             </div>
             <textarea id="xmlEditor" class="xml-textarea" spellcheck="false"></textarea>
 
-            <!-- Панель промпта: режим DeepSeek + редактируемый активный промпт + ссылки -->
+            <!-- Панель промпта: выбор режима (список из GIST + пользовательские) + активный промпт -->
             <div class="prompt-bar" id="promptBar">
                 <div class="prompt-mode-row">
                     <span class="prompt-mode-label">Режим DeepSeek:</span>
-                    <div class="mode-switch" role="radiogroup" aria-label="Режим DeepSeek">
-                        <button type="button" class="mode-btn" id="btnModeProposals" role="radio" aria-checked="false">Предложения</button>
-                        <button type="button" class="mode-btn" id="btnModeParagraphs" role="radio" aria-checked="true">Абзацы</button>
-                    </div>
-                    <button type="button" class="btn btn-sm btn-ghost" id="btnCopyPrompt" title="Скопировать активный промпт">📋 Промпт</button>
-                    <button type="button" class="btn btn-sm btn-ghost" id="btnReloadPrompt" title="Перезагрузить промпт с GitHub Gist (отменит правки)">↻ Gist</button>
-                    <a class="prompt-gist-link" id="promptGistLink" href="#" target="_blank" rel="noopener" title="Открыть промпт на GitHub Gist">Промпт на Gist ↗</a>
+                    <select id="dsModeSelect" class="input-base input-sm mode-select" title="Список промптов хранится в одном Gist (MD-файл); свои промпты можно добавить в окне «Промпты»">
+                        <option value="paragraphs">Абзацы</option>
+                        <option value="proposals">Предложения</option>
+                    </select>
+                    <button type="button" class="btn btn-sm btn-ghost" id="btnManagePrompts" title="Все промпты: добавление своих, редактирование, сохранение в Gist">📝 Промпты…</button>
+                    <button type="button" class="btn btn-sm btn-ghost" id="btnEditPrompt" title="Открыть активный промпт в текстовом редакторе">✎ Редактор</button>
+                    <button type="button" class="btn btn-sm btn-ghost" id="btnCopyPrompt" title="Скопировать активный промпт">📋 Копировать</button>
+                    <button type="button" class="btn btn-sm btn-ghost" id="btnReloadPrompt" title="Перезагрузить активный промпт из Gist (отменит правки)">↻ Gist</button>
+                    <a class="prompt-gist-link hidden" id="promptGistLink" href="#" target="_blank" rel="noopener" title="Открыть Gist со списком промптов">Промпты на Gist ↗</a>
                 </div>
-                <textarea class="prompt-text prompt-editable" id="promptText" spellcheck="false"
-                    title="Активный промпт — можно редактировать; изменения сохраняются в браузере"></textarea>
+                <textarea class="prompt-text prompt-editable" id="promptText" spellcheck="false" readonly
+                    title="Активный промпт (только просмотр). Для правки — кнопка «✎ Редактор»"></textarea>
             </div>
         </aside>
 
@@ -257,6 +262,55 @@
             <div class="modal-actions">
                 <button type="button" class="btn" id="btnLoadCancel">Отмена</button>
                 <button type="button" class="btn btn-primary" id="btnLoadConfirm">Загрузить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== Модальное окно: все промпты (хранятся в одном Gist, MD-формат) ===== -->
+    <div class="modal-overlay" id="promptsModal" role="dialog" aria-modal="true" aria-labelledby="promptsTitle">
+        <div class="modal modal-wide">
+            <div class="modal-header">
+                <h3 id="promptsTitle">Промпты DeepSeek</h3>
+                <button type="button" class="btn-icon" id="btnPromptsClose" aria-label="Закрыть окно промптов">✕</button>
+            </div>
+            <div class="modal-body prompts-modal-body">
+                <p class="hint">Все промпты хранятся в <strong>одном GitHub Gist</strong> в формате Markdown (каждый — секция «## название»).
+                    Промпты из Gist помечены значком ☁; свои добавляются кнопкой «+ Новый промпт».</p>
+                <ul class="prompt-list" id="promptList"></ul>
+                <div class="prompt-add-row">
+                    <input type="text" id="newPromptName" class="input-base" placeholder="Название нового промпта">
+                    <button type="button" class="btn btn-sm" id="btnAddPrompt">+ Новый промпт</button>
+                </div>
+                <label class="switch-inline prompt-gist-switch" title="Ссылка на Gist с общим MD-файлом промптов">
+                    <span class="switch-caption">Gist со всеми промптами:</span>
+                    <input type="text" id="promptsGistUrl" class="input-base input-mono input-sm" placeholder="https://gist.github.com/…">
+                </label>
+                <div class="prompt-gist-actions">
+                    <button type="button" class="btn btn-sm" id="btnReloadPrompts" title="Перезагрузить все промпты из Gist">↻ Загрузить из Gist</button>
+                    <button type="button" class="btn btn-sm btn-primary" id="btnSavePromptsToGist" title="Сохранить все промпты (включая свои) обратно в этот же Gist">💾 Сохранить все в Gist</button>
+                </div>
+                <p class="hint">«Сохранить все в Gist» требует GitHub Token (⚙ Настройки) и записи gist. Если ссылка на Gist не указана — создаётся новый Gist, а его ссылка запоминается.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" id="btnPromptsDone">Готово</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== Модальное окно: текстовый редактор активного промпта ===== -->
+    <div class="modal-overlay" id="promptEditorModal" role="dialog" aria-modal="true" aria-labelledby="promptEditorTitle">
+        <div class="modal modal-xl">
+            <div class="modal-header">
+                <h3 id="promptEditorTitle">Редактор промпта</h3>
+                <button type="button" class="btn-icon" id="btnPromptEditorClose" aria-label="Закрыть редактор промпта">✕</button>
+            </div>
+            <div class="modal-body">
+                <textarea id="promptEditorArea" class="prompt-editor-area" spellcheck="false"></textarea>
+                <p class="hint" id="promptEditorInfo"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn" id="btnPromptEditorCancel">Отмена</button>
+                <button type="button" class="btn btn-primary" id="btnPromptEditorSave">Сохранить промпт</button>
             </div>
         </div>
     </div>
