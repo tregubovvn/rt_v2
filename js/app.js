@@ -13,7 +13,7 @@ const NEXT_QUESTION_DELAY = 800;    // мс, пауза после верног�
 const FINAL_NEXT_DELAY = 1200;      // мс, пауза перед следующим вопросом финального теста
 const WRONG_ANSWER_RESET_DELAY = 1000; // мс, сброс подсветки неверного ответа
 const TEACHER_PAGE_URL = 'https://tregubovvn.github.io/rt_v2/right_answer/index.html';
-const PASS_RATIO = 0.7;             // доля правильных ответов для оценки не ниже «3»
+const READING_PASS_RATIO = 0.6;     // доля верно отвеченных вопросов чтения для оценки «3»
 
 // --- Состояние приложения ---
 const state = {
@@ -26,6 +26,8 @@ const state = {
     seconds: 0,
     currentErrors: 0,
     sessionStart: null,         // момент загрузки первого экрана с заданием (мс)
+    /** Прогресс режима чтения: верно отвеченные вопросы по индексам фрагментов. */
+    readingProgress: [],
     results: createResults()
 };
 
@@ -41,7 +43,7 @@ function cacheElements() {
         'main-header', 'header-step', 'header-badge', 'error-counter-box', 'error-count',
         'pips-container', 'screen-auth', 'screen-process', 'screen-result',
         'input-fio', 'topic-name-label', 'file-input', 'file-btn-text', 'file-status',
-        'btn-start', 'btn-skip', 'btn-teacher', 'btn-finish',
+        'btn-start', 'btn-skip', 'btn-teacher', 'btn-finish', 'btn-finish-reading',
         'timer-fill', 'content-area', 'controls-area',
         'final-grade-val', 'final-fio', 'stat-time', 'stat-errors', 'results-table',
         'info-fio', 'info-topic', 'info-datetime', 'info-elapsed'
@@ -62,6 +64,32 @@ function setHeader(stepText, badgeText, isFinalBadge) {
     el['header-step'].textContent = stepText;
     el['header-badge'].textContent = badgeText;
     el['header-badge'].classList.toggle('badge-final', Boolean(isFinalBadge));
+}
+
+/**
+ * Переключение кнопки завершения в шапке:
+ * в режиме чтения — «Завершить чтение» (переход к финальному окну),
+ * в режимах теста — «Завершить тест» (переход к результатам).
+ */
+function setFinishButton(mode) {
+    const btn = el['btn-finish'];
+    if (mode === 'reading') {
+        btn.textContent = 'Завершить чтение';
+        btn.title = 'Завершить чтение и перейти к финальному окну';
+        btn.onclick = finishReading;
+    } else {
+        btn.textContent = 'Завершить тест';
+        btn.title = 'Завершить тест и перейти к результатам';
+        btn.onclick = requestFinishTest;
+    }
+}
+
+/** Пройдено ли более 60% заданий режима чтения (для оценки не ниже «3»). */
+function isReadingPassed() {
+    const totalFragments = state.fragments.length;
+    if (!totalFragments) return false;
+    const passed = state.readingProgress.filter(Boolean).length;
+    return passed / totalFragments > READING_PASS_RATIO;
 }
 
 function setErrorCounter(visible) {
@@ -169,6 +197,7 @@ function startTest() {
 
     state.currentFragmentIndex = 0;
     state.results = createResults();
+    state.readingProgress = new Array(state.fragments.length).fill(false);
 
     showScreen('process');
     renderPips();
@@ -193,6 +222,7 @@ function showFragment() {
     state.currentErrors = 0;
     setErrorCounter(false);
     setHeader('Фрагмент ' + (state.currentFragmentIndex + 1), 'Чтение', false);
+    setFinishButton('reading');
 
     restartTimer(frag);
 
@@ -204,8 +234,13 @@ function showFragment() {
     content.style.animation = '';
 
     el['controls-area'].innerHTML =
-        '<button class="btn" id="btn-ready">Готов к вопросам</button>';
+        '<div class="controls-row">' +
+        '<button class="btn" id="btn-ready">Готов к вопросам</button>' +
+        '<button class="btn btn-finish-inline" id="btn-finish-reading" type="button" ' +
+        'title="Завершить чтение и перейти к финальному окну">Завершить чтение</button>' +
+        '</div>';
     document.getElementById('btn-ready').addEventListener('click', startQuestions);
+    document.getElementById('btn-finish-reading').addEventListener('click', finishReading);
 }
 
 function restartTimer(frag) {
@@ -240,6 +275,7 @@ function startQuestions() {
     state.currentQuestionIndex = 0;
 
     setHeader('Фрагмент ' + (state.currentFragmentIndex + 1), 'Тест', false);
+    setFinishButton('quiz');
     setErrorCounter(true);
 
     renderQuestion();
@@ -282,12 +318,15 @@ function renderQuestion() {
 
 /** Все вопросы пройдены: переход к следующему фрагменту или финальному тесту. */
 function onFragmentQuestionsFinished() {
+    // Фрагмент считается пройденным (для оценки за чтение)
+    state.readingProgress[state.currentFragmentIndex] = true;
+
     if (state.currentFragmentIndex < state.fragments.length - 1) {
         state.currentFragmentIndex++;
         renderPips();
         showFragment();
     } else {
-        finishTest();
+        startFinalTestStage();
     }
 }
 
@@ -401,6 +440,7 @@ function startFinalTestStage() {
 
     renderPips();
     setHeader('Итог', 'Финал', true);
+    setFinishButton('final');
     setErrorCounter(false);
     showFinalIntro('Начать');
 }
@@ -451,16 +491,16 @@ function handleFinalAnswer(q, value, correct) {
 
 /**
  * Оценка по результатам финального теста:
- *  - пройдено более 70% вопросов -> как минимум «3»;
- *    далее «4» и «5» — по порогу правильных ответов (80% / 90%);
- *  - не пройдено (<=70%) -> «2».
+ *  - пройдено более 60% вопросов -> как минимум «3»;
+ *    далее «4» и «5» — только через тестирование по порогам 70% / 85%;
+ *  - не пройдено (<=60%) -> «2».
  */
 function calculateGrade(correct, total) {
     if (total <= 0) return 2;
     const ratio = correct / total;
-    if (ratio > PASS_RATIO) {
-        if (ratio >= 0.9) return 5;
-        if (ratio >= 0.8) return 4;
+    if (ratio > READING_PASS_RATIO) {
+        if (ratio >= 0.85) return 5;
+        if (ratio >= 0.7) return 4;
         return 3;
     }
     return 2;
@@ -510,6 +550,46 @@ function requestFinishTest() {
     finishTest();
 }
 
+/**
+ * Кнопка «Завершить чтение» (рядом с «Готов к вопросам» и в шапке):
+ * переход к финальному окну. Если пройдено более 60% заданий чтения —
+ * сразу ставится оценка «3» (выше — только через финальное тестирование),
+ * иначе открывается окно финального теста.
+ */
+function finishReading() {
+    if (state.mode !== 'reading') return;   // защита от повторного нажатия
+
+    clearInterval(state.timerId);           // остановить таймер фрагмента
+
+    if (isReadingPassed()) {
+        showResultsFromReading();
+    } else {
+        startFinalTestStage();
+    }
+}
+
+/** Окно результатов при завершении чтения (оценка «3» за пройденные >60% заданий). */
+function showResultsFromReading() {
+    const elapsedMs = state.sessionStart ? (Date.now() - state.sessionStart) : 0;
+    const elapsedSec = Math.round(elapsedMs / 1000);
+
+    const now = new Date();
+    const dateTimeStr = now.toLocaleDateString('ru-RU') + ' ' + now.toLocaleTimeString('ru-RU');
+
+    el['info-fio'].textContent = el['input-fio'].value.trim() || '—';
+    el['info-topic'].textContent = state.topicName || '—';
+    el['info-datetime'].textContent = dateTimeStr;
+    el['info-elapsed'].textContent = formatDuration(elapsedSec);
+
+    el['final-fio'].textContent = el['input-fio'].value.trim();
+    el['final-grade-val'].textContent = 3;
+    el['stat-time'].textContent = formatDuration(elapsedSec);
+    el['stat-errors'].textContent = '—';
+
+    renderResultsTable([]);
+    showScreen('result');
+}
+
 function renderResultsTable(finalAnswers) {
     const tbody = el['results-table'].querySelector('tbody');
     tbody.innerHTML = '';
@@ -552,8 +632,8 @@ document.addEventListener('DOMContentLoaded', () => {
     el['btn-start'].addEventListener('click', startTest);
     el['btn-skip'].addEventListener('click', startFinalTestDirectly);
     el['btn-teacher'].addEventListener('click', redirectToTeacherPage);
-    // «Завершить тест» — работает на любом экране режима прохождения (рядом с «Ответить» дублируется в зоне управления)
-    el['btn-finish'].addEventListener('click', requestFinishTest);
+    // Обработчик кнопки завершения в шапке назначается через setFinishButton()
+    // («Завершить чтение» в режиме чтения / «Завершить тест» в режимах теста)
 
     initFromUrl();
 });
