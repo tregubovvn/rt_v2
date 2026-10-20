@@ -796,3 +796,17 @@ body.ai-busy .workspace, body.ai-busy .topbar { pointer-events: none; user-selec
     transform-origin: 5px 5px; animation: ai-orbit-move 2.4s linear infinite;
 }
 @keyframes ai-orbit-move { from { transform: rotate(0deg) translateX(48px) rotate(0deg); } to { transform: rotate(360deg) translateX(48px) rotate(-360deg); } }
+
+/* ===== Просмотр/редактирование ответа DeepSeek (когда пришёл не XML) ===== */
+.ds-result-area {
+    flex: 1; min-height: 320px; resize: none;
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.85rem; line-height: 1.5;
+    background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 0.75rem; outline: none;
+}
+.ds-result-area:focus { border-color: var(--accent); }
+.ds-result-footer { display: flex; justify-content: center; gap: 0.6rem; margin-top: 0.9rem; }
+.ds-result-warning {
+    background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.45);
+    color: #fbbf24; border-radius: 8px; padding: 0.5rem 0.8rem; font-size: 0.85rem; margin-bottom: 0.8rem;
+}
