@@ -98,9 +98,12 @@ function cacheElements() {
         'promptsModal', 'promptList', 'newPromptName', 'btnAddPrompt', 'promptsGistUrl',
         'btnReloadPrompts', 'btnSavePromptsToGist',
         'promptEditorModal', 'promptEditorArea', 'promptEditorInfo',
+        'dsResultModal', 'dsResultArea', 'dsResultInfo',
     ];
     els = {};
     ids.forEach(id => { els[id] = document.getElementById(id); });
+    // Окно результата DeepSeek (когда ответ пришёл НЕ в виде XML) создаём динамически
+    if (!els.dsResultModal) buildDsResultWindow();
     // Элементы вне стандартного списка (переключатель автосохранения в верхней панели)
     els.autoSaveToggle = document.getElementById('autoSaveToggle');
 }
@@ -1816,8 +1819,14 @@ async function askDeepSeek(mode) {
         updateAiStage('Ответ получен — применяю к редактору…');
         const resultXml = extractXmlFromText(fullReply);
         if (!resultXml || !resultXml.includes('<readingTest')) {
-            throw new Error('В ответе модели нет XML-задания');
+            // DeepSeek прислал НЕ XML: открываем редактируемое окно результата
+            // с кнопками «Копировать», «Закрыть», «Отправить в DeepSeek».
+            setUiBusy(false);
+            showDsResultWindow(fullReply, mode);
+            setStatus('DeepSeek: ответ не является XML — открыт в окне результата');
+            return;
         }
+        hideDsResultWindow();
         els.xmlEditor.value = resultXml;
         // Результат сразу применяем к редактору; автосохранение запишет его
         // в выбранный файл на диске (если он выбран и автосохранение включено)
@@ -1857,6 +1866,120 @@ async function copyPrompt(mode) {
         showToast('Промпт скопирован в буфер обмена');
     } catch (e) {
         showToast('Не удалось скопировать промпт', true);
+    }
+}
+
+// ============================================================
+// Окно результата DeepSeek (когда ответ пришёл НЕ в виде XML)
+// Редактируемый текст + кнопки: Копировать / Закрыть / Отправить в DeepSeek
+// ============================================================
+let dsResultMode = null;   // режим (id промпта), в котором был получен не-XML ответ
+
+function buildDsResultWindow() {
+    if (document.getElementById('dsResultModal')) return; // уже есть в разметке
+    const div = document.createElement('div');
+    div.id = 'dsResultModal';
+    div.className = 'modal-overlay';
+    div.innerHTML = `
+        <div class="modal" style="max-width: 860px; width: 92%; display: flex; flex-direction: column;">
+            <div class="modal-header">
+                <h3>🤖 Ответ DeepSeek — не XML</h3>
+                <button type="button" class="btn btn-icon" data-close title="Закрыть">✕</button>
+            </div>
+            <div class="modal-body" style="display:flex; flex-direction:column; gap:0.7rem;">
+                <div class="ds-result-warning">⚠ Модель прислала результат не в формате XML-задания.
+                    Текст можно отредактировать вручную, скопировать или отправить обратно в DeepSeek
+                    (например, с уточнением, что нужен XML по шаблону).</div>
+                <div id="dsResultInfo" class="prompt-editor-info"></div>
+                <textarea id="dsResultArea" class="ds-result-area" spellcheck="false"></textarea>
+            </div>
+            <div class="ds-result-footer">
+                <button type="button" class="btn" id="btnDsResultCopy">📋 Копировать</button>
+                <button type="button" class="btn btn-secondary" data-close>Закрыть</button>
+                <button type="button" class="btn btn-primary" id="btnDsResultSend">🤖 Отправить в DeepSeek</button>
+            </div>
+        </div>`;
+    document.body.appendChild(div);
+    els.dsResultModal = div;
+    els.dsResultArea = div.querySelector('#dsResultArea');
+    els.dsResultInfo = div.querySelector('#dsResultInfo');
+    div.addEventListener('click', (e) => {
+        if (e.target === div || (e.target.closest && e.target.closest('[data-close]'))) hideDsResultWindow();
+    });
+    div.querySelector('#btnDsResultCopy').addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(els.dsResultArea.value);
+            showToast('Текст ответа скопирован в буфер обмена');
+        } catch (err) { showToast('Не удалось скопировать', true); }
+    });
+    div.querySelector('#btnDsResultSend').addEventListener('click', () => {
+        sendDsResultToDeepSeek(els.dsResultArea.value, dsResultMode || currentDsMode());
+    });
+}
+
+function showDsResultWindow(text, mode) {
+    buildDsResultWindow();
+    dsResultMode = mode;
+    els.dsResultArea.value = text;
+    const p = getPromptById(mode) || state.prompts[0];
+    els.dsResultInfo.textContent = 'Режим: «' + (p ? p.name : mode) + '» · длина ответа: ' + text.length + ' симв.';
+    els.dsResultModal.classList.add('show');
+    els.dsResultArea.focus();
+}
+
+function hideDsResultWindow() {
+    if (!els.dsResultModal) return;
+    els.dsResultModal.classList.remove('show');
+}
+
+// Отправка отредактированного текста окна обратно в DeepSeek.
+// Ответ снова проверяется: XML -> в панель и редактор, не-XML -> остаёмся в этом окне.
+async function sendDsResultToDeepSeek(userText, mode) {
+    const token = getDeepseekToken();
+    if (!token) { showToast('Не указан токен DeepSeek (⚙ Настройки)', true); return; }
+    if (!userText.trim()) { showToast('Текст для отправки пуст', true); return; }
+    const p = getPromptById(mode) || state.prompts[0];
+    setUiBusy(true, 'DeepSeek (' + (p ? p.name : mode) + '): повторная отправка…');
+    startAiProgress();
+    try {
+        const messages = [{ role: 'user', content: userText }];
+        let fullReply = '';
+        for (let i = 0; i < 4; i++) {
+            updateAiStage(i === 0 ? 'Отправлено, ждём ответ…' : 'Продолжение генерации (' + i + '/3)…');
+            const reply = await deepseekChat(token, messages);
+            fullReply += (i > 0 ? '\n' : '') + reply;
+            messages.push({ role: 'assistant', content: reply });
+            const probe = extractXmlFromText(fullReply);
+            if (fullReply.includes(READY_MARKER) || (probe && probe.includes('<readingTest'))) break;
+            if (i === 3) break;
+            messages.push({ role: 'user', content: 'Задание ещё не готово. Выдай ПОЛНЫЙ готовый XML целиком, без пояснений.' });
+        }
+        stopAiProgress();
+        const resultXml = extractXmlFromText(fullReply);
+        if (resultXml && resultXml.includes('<readingTest')) {
+            hideDsResultWindow();
+            els.xmlEditor.value = resultXml;
+            applyingXmlToEditor = true;
+            let parsedOk = false;
+            try {
+                parsedOk = parseXmlToData(resultXml);
+                if (parsedOk) { state.currentFragmentIndex = 0; renderFragment(); }
+            } finally { applyingXmlToEditor = false; }
+            markTaskChanged();
+            showToast(parsedOk ? 'Ответ DeepSeek применён к XML и редактору' : 'Ответ получен, но XML некорректен — проверьте панель XML', !parsedOk);
+            setStatus('DeepSeek: ответ применён');
+        } else {
+            showDsResultWindow(fullReply, mode);
+            setStatus('DeepSeek: ответ снова не XML — осталось в окне результата');
+        }
+    } catch (e) {
+        console.error(e);
+        stopAiProgress();
+        showToast('DeepSeek: ' + e.message, true);
+        setStatus('DeepSeek: ошибка — ' + e.message);
+    } finally {
+        stopAiProgress();
+        setUiBusy(false);
     }
 }
 
