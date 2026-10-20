@@ -709,3 +709,90 @@ body.ai-busy .workspace, body.ai-busy .topbar { pointer-events: none; user-selec
 @media (max-width: 900px) {
     .review-panel { position: absolute; right: 0; top: 0; bottom: 0; z-index: 30; box-shadow: -8px 0 24px rgba(0,0,0,0.4); }
 }
+
+/* ===== Колонка «Автосохранение + время последнего сохранения» ===== */
+.autosave-col { display: flex; flex-direction: column; gap: 2px; justify-content: center; }
+.switch-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--fg-muted); cursor: pointer; }
+.switch-inline input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+.switch-caption { white-space: nowrap; }
+.autosave-time { font-size: 0.68rem; color: var(--success); white-space: nowrap; }
+
+/* ===== Подсветка кнопки сохранения, когда есть несохранённые изменения ===== */
+.save-hint { animation: save-pulse 1.2s ease-in-out infinite; }
+@keyframes save-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.5); }
+    50%      { box-shadow: 0 0 0 6px rgba(74, 222, 128, 0); }
+}
+
+/* ===== Панель промпта под окном XML ===== */
+.prompt-bar { border-top: 1px solid var(--border); padding: 0.4rem 0.5rem; display: flex; flex-direction: column; gap: 0.35rem; background: var(--bg-elevated); }
+.mode-select { max-width: 180px; }
+.prompt-text {
+    width: 100%; min-height: 90px; resize: vertical;
+    background: var(--bg-card); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; line-height: 1.35;
+    padding: 0.4rem;
+}
+.prompt-text[readonly] { opacity: 0.85; }
+
+/* ===== Окно «Промпты DeepSeek» ===== */
+.prompts-modal-body { display: flex; flex-direction: column; gap: 0.6rem; }
+.prompt-list { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.35rem; }
+.prompt-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+    border: 1px solid var(--border); border-radius: 8px; padding: 0.45rem 0.6rem;
+    background: var(--bg-card); cursor: pointer; transition: border-color 0.15s;
+}
+.prompt-item:hover { border-color: var(--accent); }
+.prompt-item.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.prompt-item-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.prompt-item-name { font-size: 0.85rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prompt-item-meta { font-size: 0.7rem; color: var(--fg-muted); }
+.prompt-item-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.btn-ghost { background: transparent; border-color: var(--border); }
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+.prompt-add-row { display: flex; gap: 0.4rem; }
+.prompt-gist-switch { align-items: flex-start; flex-direction: column; gap: 4px; }
+.prompt-gist-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.input-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.input-sm { font-size: 0.78rem; padding: 0.3rem 0.45rem; }
+
+/* ===== Модальное окно текстового редактора промпта ===== */
+.prompt-editor-area {
+    width: 100%; height: 55vh; resize: vertical;
+    background: var(--bg-card); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; line-height: 1.45;
+    padding: 0.7rem; tab-size: 2;
+}
+.prompt-editor-area:focus { outline: none; border-color: var(--accent); }
+
+/* ===== Выразительное окно паузы DeepSeek («орбита» вместо спиннера) ===== */
+.ai-overlay-box {
+    background: linear-gradient(160deg, #1e293b 0%, #0f172a 60%, #1e1b4b 100%);
+    border: 1px solid #6d28d9;
+    box-shadow: 0 0 60px rgba(139, 92, 246, 0.35), 0 18px 50px rgba(0, 0, 0, 0.5);
+}
+.ai-overlay-title { font-size: 1.25rem; font-weight: 800; letter-spacing: 0.5px; color: #c4b5fd; margin-top: 1rem; }
+.ai-dots span { animation: ai-dot-blink 1.4s infinite; opacity: 0; }
+.ai-dots span:nth-child(2) { animation-delay: 0.2s; }
+.ai-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes ai-dot-blink { 0%, 60%, 100% { opacity: 0; } 30% { opacity: 1; } }
+.ai-overlay-timer-row { font-size: 0.85rem; color: var(--fg-muted); margin-top: 0.7rem; }
+.ai-timer { font-family: ui-monospace, Menlo, monospace; color: var(--accent); font-weight: 700; }
+.ai-orbit { position: relative; width: 96px; height: 96px; margin: 0 auto; }
+.ai-core {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 2rem; animation: ai-core-pulse 2s ease-in-out infinite;
+}
+@keyframes ai-core-pulse { 0%, 100% { transform: scale(1); filter: drop-shadow(0 0 6px #a78bfa); } 50% { transform: scale(1.15); filter: drop-shadow(0 0 18px #a78bfa); } }
+.ai-ring { position: absolute; inset: 0; border-radius: 50%; border: 2px dashed rgba(139, 92, 246, 0.5); }
+.ai-ring-1 { animation: ai-spin 8s linear infinite; }
+.ai-ring-2 { inset: 12px; border-style: dotted; border-color: rgba(56, 189, 248, 0.5); animation: ai-spin 5s linear infinite reverse; }
+.ai-satellite {
+    position: absolute; top: 50%; left: 50%; width: 10px; height: 10px; margin: -5px;
+    border-radius: 50%; background: #38bdf8; box-shadow: 0 0 12px #38bdf8;
+    transform-origin: 5px 5px; animation: ai-orbit-move 2.4s linear infinite;
+}
+@keyframes ai-orbit-move { from { transform: rotate(0deg) translateX(48px) rotate(0deg); } to { transform: rotate(360deg) translateX(48px) rotate(-360deg); } }

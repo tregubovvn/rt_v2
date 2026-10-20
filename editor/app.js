@@ -53,7 +53,7 @@ const state = {
 let applyingXmlToEditor = false;
 
 // Отладочный доступ к состоянию из консоли браузера (window.editorState.state)
-window.editorState = { state, api: {} };
+window.editorState = { state, api: {}, fn: {} };
 
 let els = {};                   // кэш ссылок на DOM-элементы
 
@@ -76,6 +76,11 @@ document.addEventListener('DOMContentLoaded', () => {
         addLocalPrompt, removePrompt, savePromptsToGist, getPromptsGistUrl,
     });
     loadPromptsFromGists();   // подгружаем все промпты из единого Gist (MD)
+    // Внутренние функции — для тестов и отладки из консоли браузера
+    Object.assign(window.editorState.fn, {
+        updateLastSaveTimeLabel, recordDiskSave, setUiBusy, buildDsMessage, getPromptById,
+        parsePromptsMarkdown, buildPromptsMarkdown, promptIdFromTitle, extractXmlFromText,
+    });
 });
 
 function cacheElements() {
@@ -499,6 +504,27 @@ function markTaskChanged() {
     scheduleAutoSave();
 }
 
+// Подпись под переключателем «Автосохранение»: время последнего сохранения файла на диск
+function updateLastSaveTimeLabel() {
+    const label = els.lastSaveTimeLabel;
+    if (!label) return;
+    const ts = parseInt(localStorage.getItem(LS.lastSaveTime) || '0', 10);
+    if (ts) {
+        const d = new Date(ts);
+        label.textContent = 'Последнее сохранение: ' + d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+        label.classList.remove('hidden');
+    } else {
+        label.textContent = '';
+        label.classList.add('hidden');
+    }
+}
+
+// Фиксация факта успешного сохранения на диск (ручное или автосохранение)
+function recordDiskSave() {
+    localStorage.setItem(LS.lastSaveTime, String(Date.now()));
+    updateLastSaveTimeLabel();
+}
+
 function scheduleAutoSave() {
     if (!autoSaveEnabled()) {
         // Автосохранение выключено — предлагаем сохранить файл вручную
@@ -538,6 +564,7 @@ async function autoSaveToDisk() {
             await writeFileHandle(state.fileHandle, content);
             state.dirty = false;
             showSaveHint(false);
+            recordDiskSave();
             setStatus('Автосохранено на диск: ' + state.fileHandle.name + ' в ' + new Date().toLocaleTimeString());
             return;
         }
@@ -828,6 +855,7 @@ async function saveToFile() {
             await writeFileHandle(state.fileHandle, content);
             state.dirty = false;
             showSaveHint(false);
+            recordDiskSave();
             setStatus('Сохранено в файл: ' + state.fileHandle.name);
             showToast('Файл сохранён на диск');
             return;
@@ -846,6 +874,7 @@ async function saveToFile() {
             state.fileHandle = handle;
             state.dirty = false;
             showSaveHint(false);
+            recordDiskSave();
             setStatus('Сохранено в файл: ' + handle.name + (autoSaveEnabled() ? ' (автосохранение в него включено)' : ''));
             showToast('Файл выбран и сохранён — дальнейшие изменения пишутся в него');
             return;
@@ -859,6 +888,7 @@ async function saveToFile() {
     downloadBlob(content, fileName);
     state.dirty = false;
     showSaveHint(false);
+    recordDiskSave();
     showToast('Файл сохранён на диск (скачан)');
 }
 
@@ -1315,13 +1345,13 @@ async function loadFromGist() {
 // Ссылка на единый Gist со всеми промптами (MD). Можно переопределить в окне «📝 Промпты…».
 const DEFAULT_PROMPTS_GIST_URL = 'https://gist.github.com/tregubovvn/2f9804a3ad5439b1bb60957b8969826a';
 
-// Встроенные (дефолтные) режимы — используются как заготовки, если в Gist
-// соответствующих секций нет; их тексты догружаются с отдельных gist'ов.
+// Два ОСНОВНЫХ промпта — обязательная основа режимов DeepSeek. Текст каждого
+// берётся напрямую с указанных gist'ов (всегда актуальная версия):
+//   Абзацы      — https://gist.github.com/tregubovvn/e837aa6949f0b20dee3925983ba2f424
+//   Предложения — https://gist.github.com/tregubovvn/36b6169ed472e716084c8fbde5e31012
 const BUILTIN_PROMPTS = [
-    { id: 'paragraphs', name: 'Абзацы',
-      fallbackUrl: 'https://gist.github.com/tregubovvn/e837aa6949f0b20dee3925983ba2f424' },
-    { id: 'proposals', name: 'Предложения',
-      fallbackUrl: 'https://gist.github.com/tregubovvn/61c8a72e42d33dbdccf81d42cfda87f2' },
+    { id: 'paragraphs', name: 'Абзацы', gistUrl: 'https://gist.github.com/tregubovvn/e837aa6949f0b20dee3925983ba2f424' },
+    { id: 'proposals', name: 'Предложения', gistUrl: 'https://gist.github.com/tregubovvn/36b6169ed472e716084c8fbde5e31012' },
 ];
 
 // Конец сообщения модели — этим блоком модель подтверждает, что задание
@@ -1401,40 +1431,61 @@ async function loadPromptsFromGists(opts = {}) {
     try { edits = JSON.parse(localStorage.getItem(LS.promptEdits) || '{}'); } catch (e) { edits = {}; }
 
     const localPrompts = state.prompts.filter(p => p.source === 'local');
+
+    // 1. ДВА ОСНОВНЫХ промпта — обязательная основа: текст всегда берётся
+    //    напрямую со ссылек gist'ов из BUILTIN_PROMPTS (актуальная версия).
+    const builtins = await Promise.all(BUILTIN_PROMPTS.map(async (b) => {
+        let text = '';
+        try { text = (await fetchGistRaw(b.gistUrl)).trim(); }
+        catch (e) { console.warn('Не удалось загрузить основной промпт «' + b.name + '»:', e); }
+        return { id: b.id, name: b.name, text, source: 'gist', gistUrl: b.gistUrl };
+    }));
+
+    // 2. Единый Gist со всеми (в т.ч. пользовательскими) промптами в MD-формате
+    //    (секции «## Название»). Основные режимы оттуда не дублируем.
     let gistPrompts = [];
     try {
         const md = await fetchGistRaw(getPromptsGistUrl());
-        gistPrompts = parsePromptsMarkdown(md);
+        gistPrompts = parsePromptsMarkdown(md)
+            .filter(p => !BUILTIN_PROMPTS.some(b => b.id === p.id));
     } catch (e) {
         console.warn('Не удалось загрузить единый Gist промптов:', e);
     }
 
-    // Если в едином Gist нет встроенных режимов — догружаем их с fallback-ссылок
-    for (const b of BUILTIN_PROMPTS) {
-        if (!gistPrompts.some(p => p.id === b.id)) {
-            try {
-                const text = await fetchGistRaw(b.fallbackUrl);
-                if (text.trim()) gistPrompts.push({ id: b.id, name: b.name, text: text.trim(), source: 'gist' });
-            } catch (e) { /* сеть недоступна — режим останется с пустым текстом */ }
-        }
-    }
-
-    // Порядок: встроенные первыми (как привычные режимы), остальные — как в Gist
-    const ordered = [
-        ...BUILTIN_PROMPTS.map(b => gistPrompts.find(p => p.id === b.id)).filter(Boolean),
-        ...gistPrompts.filter(p => !BUILTIN_PROMPTS.some(b => b.id === p.id)),
-    ];
+    // Порядок: основные режимами первыми, затем остальные из Gist, затем локальные
+    const ordered = [...builtins.filter(p => p.text), ...gistPrompts];
 
     if (opts.only) {
-        // Обновляем только один промпт из Gist, всё остальное оставляем как есть
-        const fresh = ordered.find(p => p.id === opts.only);
+        // Обновляем только один промпт: основной — всегда с его gist-ссылки,
+        // остальные — из единого MD-Gist; локальная правка отменяется.
+        const builtin = BUILTIN_PROMPTS.find(b => b.id === opts.only);
+        let fresh = null;
+        if (builtin) {
+            try { fresh = { text: (await fetchGistRaw(builtin.gistUrl)).trim() }; }
+            catch (e) { showToast('Не удалось загрузить промпт «' + builtin.name + '»: ' + e.message, true); return; }
+        } else {
+            fresh = ordered.find(p => p.id === opts.only);
+        }
         if (fresh) {
             const existing = getPromptById(opts.only);
-            if (existing) { existing.text = fresh.text; existing.name = fresh.name; existing.source = 'gist'; }
+            if (existing) {
+                existing.text = fresh.text || existing.text;
+                if (fresh.name) existing.name = fresh.name;
+                existing.source = 'gist';
+            }
             else state.prompts.push(fresh);
+            // Правка в localStorage больше не должна перекрывать свежий текст
+            delete edits[opts.only];
+            localStorage.setItem(LS.promptEdits, JSON.stringify(edits));
         }
     } else {
-        state.prompts = [...ordered, ...localPrompts];
+        // Основные промпты всегда присутствуют в списке (даже при пустом тексте —
+        // чтобы режим был виден и его можно было перезагрузить кнопкой «↻ Gist»);
+        // остальные промпты: сначала уже известные (с сохранением порядка),
+        // затем новые из единого MD-Gist, затем локальные пользовательские.
+        const known = state.prompts.filter(p => !BUILTIN_PROMPTS.some(b => b.id === p.id) && p.source !== 'local');
+        const extras = gistPrompts.filter(p => !known.some(q => q.id === p.id));
+        state.prompts = [...builtins, ...known, ...extras, ...localPrompts];
     }
 
     // Восстанавливаем локальные правки поверх загруженных текстов
