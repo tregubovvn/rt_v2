@@ -1,0 +1,28 @@
+name: Mirror to GitVerse
+
+on:
+  push:
+    branches: [ main, master ] # Укажите ваши основные ветки
+  delete:
+    branches: [ main, master ]
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Важно для полной истории
+
+      - name: Mirror to GitVerse
+        uses: lissy93/repo-mirror-action@v1
+        with:
+          # URL репозитория-зеркала на GitVerse
+          # Например: git@gitverse.ru:username/repo-name.git
+          target_repo_url: 'git@gitverse.ru:tregubovvn/rt_v2.git'
+          # Ссылка на секрет с приватным ключом
+          ssh_private_key: ${{3wrMfl85hchO6b0BjCz7vJXfMMaLlhEuN1qsHaHJ8bE}}
+          # Или, если используете токен:
+          target_repo_url: 'https://gitverse.ru/tregubovvn/rt_v2.git'
+          token: ${{2ebc8c463d9e42a8a90259b12e4155788bcdddcf}}
