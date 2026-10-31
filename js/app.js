@@ -678,7 +678,10 @@ async function saveResultViaTracker() {
 
     btn.disabled = false;
     if (result.success) {
-        statusEl.textContent = 'Результат сохранён в Student Tracker.';
+        const trackerUrl = 'https://tregubovvn.github.io/save_all_result/public/student.html?id=' + encodeURIComponent(studentId);
+        statusEl.innerHTML =
+            'Результат сохранён в Student Tracker. ' +
+            '<a href="' + trackerUrl + '" target="_blank" rel="noopener">Посмотреть все оценки</a>';
         statusEl.className = 'save-result-status success';
         // Событие для внешних интеграций (embed-протокол save_all_result)
         window.dispatchEvent(new CustomEvent('studentRecordSaved', { detail: { record: result.record } }));
