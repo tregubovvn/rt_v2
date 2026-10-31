@@ -22,7 +22,7 @@ jobs:
           # Например: git@gitverse.ru:username/repo-name.git
           target_repo_url: 'git@gitverse.ru:tregubovvn/rt_v2.git'
           # Ссылка на секрет с приватным ключом
-          ssh_private_key: "3wrMfl85hchO6b0BjCz7vJXfMMaLlhEuN1qsHaHJ8bE"
+          ssh_private_key: ${{ secrets.GITVERSE_SSH_KEY }}
           # Или, если используете токен:
           #target_repo_url: 'https://gitverse.ru/tregubovvn/rt_v2.git'
           #token: "2ebc8c463d9e42a8a90259b12e4155788bcdddcf"
