@@ -425,3 +425,22 @@ td.center { text-align: center; }
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
 }
 .result-info-label { font-weight: 700; color: var(--text-light); }
+
+/* --- Сохранение результата через Student Tracker (save_all_result) --- */
+.save-result-block {
+    margin-top: 24px;
+    padding: 20px;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 12px;
+}
+
+.save-result-status {
+    margin-top: 12px;
+    font-size: 14px;
+    min-height: 18px;
+}
+
+.save-result-status.info    { color: #569cd6; }
+.save-result-status.success { color: #2e7d32; }
+.save-result-status.error   { color: #c62828; }

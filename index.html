@@ -38,6 +38,11 @@
         </div>
 
         <div class="input-group">
+            <label for="input-group-name">Группа</label>
+            <input type="text" id="input-group-name" placeholder="Например: БП1-24">
+        </div>
+
+        <div class="input-group">
             <label id="topic-name-label">Тема:</label>
             <input type="file" id="file-input" accept=".xml" class="hidden-file">
             <button class="btn btn-secondary" id="btn-choose-file" type="button">
@@ -91,9 +96,22 @@
             <thead><tr><th>Вопрос</th><th>Ответ</th><th>Статус</th></tr></thead>
             <tbody></tbody>
         </table>
+
+        <!-- Сохранение результата через Student Tracker (save_all_result): студент указывает только ИД -->
+        <div class="save-result-block" id="save-result-block">
+            <h3 class="section-title">Сохранение результата</h3>
+            <div class="input-group">
+                <label for="input-student-id">ИД студента (студенческий билет)</label>
+                <input type="text" id="input-student-id" placeholder="Например: 2411234">
+            </div>
+            <button class="btn" id="btn-save-result" type="button">Сохранить результат</button>
+            <div class="save-result-status" id="save-result-status"></div>
+        </div>
     </div>
 </div>
 
+<!-- API Student Tracker: https://github.com/tregubovvn/save_all_result -->
+<script src="public/api.js"></script>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>

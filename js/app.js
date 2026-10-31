@@ -42,11 +42,12 @@ function cacheElements() {
     const ids = [
         'main-header', 'header-step', 'header-badge', 'error-counter-box', 'error-count',
         'pips-container', 'screen-auth', 'screen-process', 'screen-result',
-        'input-fio', 'topic-name-label', 'file-input', 'file-btn-text', 'file-status',
+        'input-fio', 'input-group-name', 'topic-name-label', 'file-input', 'file-btn-text', 'file-status',
         'btn-start', 'btn-skip', 'btn-teacher', 'btn-finish', 'btn-finish-reading',
         'timer-fill', 'content-area', 'controls-area',
         'final-grade-val', 'final-fio', 'stat-time', 'stat-errors', 'results-table',
-        'info-fio', 'info-topic', 'info-datetime', 'info-elapsed'
+        'info-fio', 'info-topic', 'info-datetime', 'info-elapsed',
+        'input-student-id', 'btn-save-result', 'save-result-status'
     ];
     ids.forEach((id) => { el[id] = document.getElementById(id); });
 }
@@ -541,6 +542,13 @@ function finishTest() {
     el['stat-time'].textContent = formatDuration(elapsedSec);
     el['stat-errors'].textContent = errors;
 
+    state.lastResult = {
+        grade: el['final-grade-val'].textContent,
+        errors: errors,
+        elapsedSec: elapsedSec,
+        tookFinalTest: true
+    };
+
     renderResultsTable(finalAnswers);
     showScreen('result');
 }
@@ -586,6 +594,13 @@ function showResultsFromReading() {
     el['stat-time'].textContent = formatDuration(elapsedSec);
     el['stat-errors'].textContent = '—';
 
+    state.lastResult = {
+        grade: 3,
+        errors: '—',
+        elapsedSec: elapsedSec,
+        tookFinalTest: false
+    };
+
     renderResultsTable([]);
     showScreen('result');
 }
@@ -611,6 +626,69 @@ function renderResultsTable(finalAnswers) {
     });
 }
 
+// --- Сохранение результата через Student Tracker (save_all_result) ---
+
+/**
+ * Сохраняет итог занятия в базу Student Tracker (https://github.com/tregubovvn/save_all_result).
+ * Студент указывает только ИД (студенческий билет); в примечание автоматически
+ * собираются: ФИО, группа, факт сдачи финального теста, затраченное время и число ошибок.
+ */
+async function saveResultViaTracker() {
+    const statusEl = el['save-result-status'];
+    const btn = el['btn-save-result'];
+    const studentId = el['input-student-id'].value.trim();
+
+    if (!studentId) {
+        statusEl.textContent = 'Укажите ИД студента (студенческий билет).';
+        statusEl.className = 'save-result-status error';
+        return;
+    }
+    if (!state.lastResult) {
+        statusEl.textContent = 'Нет данных результата для сохранения.';
+        statusEl.className = 'save-result-status error';
+        return;
+    }
+    if (typeof StudentAPI === 'undefined') {
+        statusEl.textContent = 'Модуль StudentAPI не загружен (public/api.js).';
+        statusEl.className = 'save-result-status error';
+        return;
+    }
+
+    const r = state.lastResult;
+    const fio = el['input-fio'].value.trim() || '—';
+    const group = el['input-group-name'].value.trim() || '—';
+    const comment = [
+        'ФИО: ' + fio,
+        'Группа: ' + group,
+        'Итоговый тест: ' + (r.tookFinalTest ? 'сдавал' : 'не сдавал'),
+        'Время: ' + formatDuration(r.elapsedSec),
+        'Ошибок: ' + r.errors
+    ].join('; ');
+
+    btn.disabled = true;
+    statusEl.textContent = 'Сохранение…';
+    statusEl.className = 'save-result-status info';
+
+    const result = await StudentAPI.save({
+        studentId: studentId,
+        activity: 'RE:AD — ' + (state.topicName || 'тест'),
+        grade: String(r.grade),
+        comment: comment
+    });
+
+    btn.disabled = false;
+    if (result.success) {
+        statusEl.textContent = 'Результат сохранён в Student Tracker.';
+        statusEl.className = 'save-result-status success';
+        // Событие для внешних интеграций (embed-протокол save_all_result)
+        window.dispatchEvent(new CustomEvent('studentRecordSaved', { detail: { record: result.record } }));
+    } else {
+        statusEl.textContent = 'Ошибка сохранения: ' + result.message;
+        statusEl.className = 'save-result-status error';
+        window.dispatchEvent(new CustomEvent('studentRecordError', { detail: { message: result.message } }));
+    }
+}
+
 // --- Переход в режим преподавателя ---
 
 function redirectToTeacherPage() {
@@ -632,6 +710,7 @@ document.addEventListener('DOMContentLoaded', () => {
     el['btn-start'].addEventListener('click', startTest);
     el['btn-skip'].addEventListener('click', startFinalTestDirectly);
     el['btn-teacher'].addEventListener('click', redirectToTeacherPage);
+    el['btn-save-result'].addEventListener('click', saveResultViaTracker);
     // Обработчик кнопки завершения в шапке назначается через setFinishButton()
     // («Завершить чтение» в режиме чтения / «Завершить тест» в режимах теста)
 
