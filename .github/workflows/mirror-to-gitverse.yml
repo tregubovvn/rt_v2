@@ -23,5 +23,5 @@ jobs:
           ssh_key: ${{ secrets.GITVERSE_SSH_KEY }}
           # URL репозитория-зеркала на GitVerse
           # Замените ваш_логин на ваш реальный логин
-         target_repo_url: 'ssh://git@gitverse.ru:2222/ваш_логин/rt_v2.git'
+          target_repo_url: 'ssh://git@gitverse.ru:2222/ваш_логин/rt_v2.git'
 
