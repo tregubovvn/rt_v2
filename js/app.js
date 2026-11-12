@@ -45,8 +45,7 @@ function cacheElements() {
         'input-fio', 'input-group-name', 'topic-name-label', 'file-input', 'file-btn-text', 'file-status',
         'btn-start', 'btn-skip', 'btn-teacher', 'btn-finish', 'btn-finish-reading',
         'timer-fill', 'content-area', 'controls-area',
-        'final-grade-val', 'final-fio', 'stat-time', 'stat-errors', 'results-table',
-        'info-fio', 'info-topic', 'info-datetime', 'info-elapsed',
+        'result-summary', 'results-detail',
         'input-student-id', 'btn-save-result', 'save-result-status'
     ];
     ids.forEach((id) => { el[id] = document.getElementById(id); });
@@ -507,49 +506,89 @@ function calculateGrade(correct, total) {
     return 2;
 }
 
-/** Форматирование длительности: Чч Мм Сс. */
-function formatDuration(totalSeconds) {
+/** Форматирование длительности: Чч:Мм:Сс (как в mt_v2 / ft_v2). */
+function formatClock(totalSeconds) {
     const h = Math.floor(totalSeconds / 3600);
     const m = Math.floor((totalSeconds % 3600) / 60);
     const s = totalSeconds % 60;
-    return (h ? h + 'ч ' : '') + (h || m ? m + 'м ' : '') + s + 'с';
+    const pad = n => n.toString().padStart(2, '0');
+    return `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
+
+/** Date -> «дд.мм.гггг, чч:мм:сс» (ru-RU), как в mt_v2. */
+function formatDateTime(date) {
+    return date.toLocaleString('ru-RU', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+}
+
+// Единая итоговая сводка (как в mt_v2 / ft_v2).
+function addSummaryRow(container, label, value) {
+    const row = document.createElement('div');
+    row.className = 'result-info-row';
+    const l = document.createElement('span');
+    l.className = 'result-info-label';
+    l.textContent = label + ':';
+    const v = document.createElement('span');
+    v.textContent = value;
+    row.appendChild(l);
+    row.appendChild(v);
+    container.appendChild(row);
+}
+
+function renderSummary(data) {
+    const box = el['result-summary'];
+    box.innerHTML = '';
+    const gradeNames = { 5: 'отлично', 4: 'хорошо', 3: 'удовлетворительно', 2: 'неудовлетворительно' };
+    addSummaryRow(box, 'ФИО', (data.fio || '—') + ' Группа: ' + (data.group || ''));
+    addSummaryRow(box, 'Оценка', `${data.grade} (${gradeNames[data.grade] || '—'}), ${data.percent}% правильных ответов`);
+    addSummaryRow(box, 'Тема', data.topic || '—');
+    addSummaryRow(box, 'Начало теста', (data.startDateTimeStr || '—') + ' Окончание теста: ' + (data.endTimeStr || ''));
+    addSummaryRow(box, 'Затраченное время', data.timeSpentStr || '—');
 }
 
 function finishTest() {
     clearInterval(state.timerId);   // остановить таймер фрагмента
 
     const finalAnswers = state.results.answers.filter((a) => a.stage === 'final');
-    const answeredCount = finalAnswers.length;
+    const total = allQuestions().length;
     const correctCount = finalAnswers.filter((a) => a.correct).length;
-    const errors = answeredCount - correctCount;
+    const errors = finalAnswers.length - correctCount;
+    const grade = calculateGrade(correctCount, total);
+    const percent = total > 0 ? Math.round(correctCount / total * 100) : 0;
 
     // Затраченное время — с момента загрузки первого экрана (экран авторизации)
     const elapsedMs = state.sessionStart ? (Date.now() - state.sessionStart) : 0;
     const elapsedSec = Math.round(elapsedMs / 1000);
 
-    // Дата и время сдачи
     const now = new Date();
-    const dateTimeStr = now.toLocaleDateString('ru-RU') + ' ' + now.toLocaleTimeString('ru-RU');
+    const startDateTimeStr = state.sessionStart ? formatDateTime(new Date(state.sessionStart)) : '';
+    const endTimeStr = now.toLocaleTimeString('ru-RU');
 
-    // Верхний блок результатов: ФИО, тема, дата/время сдачи, затрачено времени
-    el['info-fio'].textContent = el['input-fio'].value.trim() || '—';
-    el['info-topic'].textContent = state.topicName || '—';
-    el['info-datetime'].textContent = dateTimeStr;
-    el['info-elapsed'].textContent = formatDuration(elapsedSec);
-
-    el['final-fio'].textContent = el['input-fio'].value.trim();
-    el['final-grade-val'].textContent = calculateGrade(correctCount, allQuestions().length);
-    el['stat-time'].textContent = formatDuration(elapsedSec);
-    el['stat-errors'].textContent = errors;
+    renderSummary({
+        fio: el['input-fio'].value.trim(),
+        group: el['input-group-name'].value.trim(),
+        grade: grade,
+        percent: percent,
+        topic: state.topicName,
+        startDateTimeStr: startDateTimeStr,
+        endTimeStr: endTimeStr,
+        timeSpentStr: formatClock(elapsedSec)
+    });
 
     state.lastResult = {
-        grade: el['final-grade-val'].textContent,
+        grade: grade,
+        percent: percent,
         errors: errors,
         elapsedSec: elapsedSec,
-        tookFinalTest: true
+        tookFinalTest: true,
+        startDateTimeStr: startDateTimeStr,
+        endTimeStr: endTimeStr,
+        timeSpentStr: formatClock(elapsedSec)
     };
 
-    renderResultsTable(finalAnswers);
+    renderDetailedResults(state.results.answers);
     showScreen('result');
 }
 
@@ -582,47 +621,84 @@ function showResultsFromReading() {
     const elapsedSec = Math.round(elapsedMs / 1000);
 
     const now = new Date();
-    const dateTimeStr = now.toLocaleDateString('ru-RU') + ' ' + now.toLocaleTimeString('ru-RU');
+    const startDateTimeStr = state.sessionStart ? formatDateTime(new Date(state.sessionStart)) : '';
+    const endTimeStr = now.toLocaleTimeString('ru-RU');
 
-    el['info-fio'].textContent = el['input-fio'].value.trim() || '—';
-    el['info-topic'].textContent = state.topicName || '—';
-    el['info-datetime'].textContent = dateTimeStr;
-    el['info-elapsed'].textContent = formatDuration(elapsedSec);
+    const totalFragments = state.fragments.length;
+    const passedFragments = state.readingProgress.filter(Boolean).length;
+    const percent = totalFragments > 0 ? Math.round(passedFragments / totalFragments * 100) : 0;
 
-    el['final-fio'].textContent = el['input-fio'].value.trim();
-    el['final-grade-val'].textContent = 3;
-    el['stat-time'].textContent = formatDuration(elapsedSec);
-    el['stat-errors'].textContent = '—';
+    renderSummary({
+        fio: el['input-fio'].value.trim(),
+        group: el['input-group-name'].value.trim(),
+        grade: 3,
+        percent: percent,
+        topic: state.topicName,
+        startDateTimeStr: startDateTimeStr,
+        endTimeStr: endTimeStr,
+        timeSpentStr: formatClock(elapsedSec)
+    });
 
     state.lastResult = {
         grade: 3,
+        percent: percent,
         errors: '—',
         elapsedSec: elapsedSec,
-        tookFinalTest: false
+        tookFinalTest: false,
+        startDateTimeStr: startDateTimeStr,
+        endTimeStr: endTimeStr,
+        timeSpentStr: formatClock(elapsedSec)
     };
 
-    renderResultsTable([]);
+    renderDetailedResults([]);
     showScreen('result');
 }
 
-function renderResultsTable(finalAnswers) {
-    const tbody = el['results-table'].querySelector('tbody');
-    tbody.innerHTML = '';
+// Разбор ответов: показаны только вопросы с правильным ответом (как в mt_v2 / ft_v2).
+function renderDetailedResults(answers) {
+    const box = el['results-detail'];
+    box.innerHTML = '';
 
-    if (finalAnswers.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="3" class="center">Нет данных</td></tr>';
+    const title = document.createElement('h3');
+    title.className = 'section-title';
+    title.textContent = 'Разбор ответов';
+    box.appendChild(title);
+
+    const note = document.createElement('p');
+    note.className = 'detail-note';
+    note.textContent = 'Показаны только вопросы, на которые был дан правильный ответ';
+    box.appendChild(note);
+
+    const correctCount = (answers || []).filter(a => a.correct).length;
+    if (correctCount === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'detail-note';
+        empty.textContent = 'Нет вопросов, отвеченных правильно';
+        box.appendChild(empty);
         return;
     }
 
-    finalAnswers.forEach((a) => {
-        const tr = document.createElement('tr');
-        const statusClass = a.correct ? 'status-correct' : 'status-wrong';
-        const statusText = a.correct ? 'Верно' : 'Ошибка';
-        tr.innerHTML =
-            `<td>${escapeHtml(a.text)}</td>` +
-            `<td>${escapeHtml(a.answer)}</td>` +
-            `<td><span class="status-badge ${statusClass}">${statusText}</span></td>`;
-        tbody.appendChild(tr);
+    (answers || []).forEach((a, i) => {
+        if (!a.correct) return;
+        const item = document.createElement('div');
+        item.className = 'detail-item';
+
+        const status = document.createElement('div');
+        status.className = 'detail-status correct';
+        status.textContent = 'Вопрос ' + (i + 1) + '. ✓ Верно';
+        item.appendChild(status);
+
+        const q = document.createElement('div');
+        q.className = 'detail-question';
+        q.textContent = a.text || '';
+        item.appendChild(q);
+
+        const ans = document.createElement('div');
+        ans.className = 'detail-answer';
+        ans.textContent = 'Ответ: ' + (a.answer || '');
+        item.appendChild(ans);
+
+        box.appendChild(item);
     });
 }
 
@@ -639,7 +715,7 @@ async function saveResultViaTracker() {
     const studentId = el['input-student-id'].value.trim();
 
     if (!studentId) {
-        statusEl.textContent = 'Укажите ИД студента (студенческий билет).';
+        statusEl.textContent = 'Введите ваш ИД (студенческий билет).';
         statusEl.className = 'save-result-status error';
         return;
     }
@@ -660,14 +736,21 @@ async function saveResultViaTracker() {
     const comment = [
         'ФИО: ' + fio,
         'Группа: ' + group,
+        'Тема: ' + (state.topicName || '—'),
+        'Начало теста: ' + (r.startDateTimeStr || '—'),
+        'Окончание теста: ' + (r.endTimeStr || '—'),
+        'Затраченное время: ' + (r.timeSpentStr || '—'),
         'Итоговый тест: ' + (r.tookFinalTest ? 'сдавал' : 'не сдавал'),
-        'Время: ' + formatDuration(r.elapsedSec),
         'Ошибок: ' + r.errors
     ].join('; ');
 
     btn.disabled = true;
     statusEl.textContent = 'Сохранение…';
     statusEl.className = 'save-result-status info';
+
+    // Браузеры разрешают window.open только из «прямого» действия пользователя,
+    // поэтому вкладку с оценками открываем заранее и подменяем URL после успеха.
+    const gradesWindow = window.open('about:blank', '_blank');
 
     const result = await StudentAPI.save({
         studentId: studentId,
@@ -679,13 +762,19 @@ async function saveResultViaTracker() {
     btn.disabled = false;
     if (result.success) {
         const trackerUrl = 'https://tregubovvn.github.io/save_all_result/public/student.html?id=' + encodeURIComponent(studentId);
-        statusEl.innerHTML =
-            'Результат сохранён в Student Tracker. ' +
-            '<a href="' + trackerUrl + '" target="_blank" rel="noopener">Посмотреть все оценки</a>';
+        if (gradesWindow) {
+            gradesWindow.location.href = trackerUrl;
+            statusEl.textContent = '✅ Результат сохранён. Все оценки студента открыты в новой вкладке.';
+        } else {
+            statusEl.innerHTML =
+                'Результат сохранён в Student Tracker. ' +
+                '<a href="' + trackerUrl + '" target="_blank" rel="noopener">Посмотреть все оценки</a>';
+        }
         statusEl.className = 'save-result-status success';
         // Событие для внешних интеграций (embed-протокол save_all_result)
         window.dispatchEvent(new CustomEvent('studentRecordSaved', { detail: { record: result.record } }));
     } else {
+        if (gradesWindow) gradesWindow.close(); // не оставляем пустую вкладку при ошибке
         statusEl.textContent = 'Ошибка сохранения: ' + result.message;
         statusEl.className = 'save-result-status error';
         window.dispatchEvent(new CustomEvent('studentRecordError', { detail: { message: result.message } }));
