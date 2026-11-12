@@ -444,3 +444,25 @@ td.center { text-align: center; }
 .save-result-status.info    { color: #569cd6; }
 .save-result-status.success { color: #2e7d32; }
 .save-result-status.error   { color: #c62828; }
+
+/* --- Единая подсказка сохранения и разбор ответов (как в mt_v2 / ft_v2) --- */
+.save-result-hint {
+    font-size: 13px;
+    color: #6b7280;
+    margin: 0 0 12px;
+    line-height: 1.5;
+}
+
+.results-detail { margin-top: 24px; text-align: left; }
+.detail-note { font-size: 13px; color: #6b7280; margin: 4px 0 12px; }
+.detail-item {
+    background: rgba(255, 255, 255, 0.75);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin-bottom: 10px;
+}
+.detail-status { font-weight: 700; margin-bottom: 6px; }
+.detail-status.correct { color: #2e7d32; }
+.detail-question { font-size: 14px; margin-bottom: 6px; }
+.detail-answer { font-size: 13.5px; color: #374151; }

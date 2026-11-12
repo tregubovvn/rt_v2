@@ -66,47 +66,22 @@
 
     <!-- Screen 3: Results -->
     <div class="screen" id="screen-result">
-        <!-- Блок результатов: ФИО, тема теста, дата/время сдачи, затраченное время -->
-        <div class="result-info-block" id="result-info-block">
-            <div class="result-info-row"><span class="result-info-label">ФИО студента:</span> <span id="info-fio">—</span></div>
-            <div class="result-info-row"><span class="result-info-label">Тема теста:</span> <span id="info-topic">—</span></div>
-            <div class="result-info-row"><span class="result-info-label">Дата и время сдачи:</span> <span id="info-datetime">—</span></div>
-            <div class="result-info-row"><span class="result-info-label">Затрачено времени:</span> <span id="info-elapsed">—</span></div>
-        </div>
-
-        <div class="result-header">
-            <div class="grade-circle" id="final-grade-val">5</div>
-            <h1 class="final-fio" id="final-fio">ФИО</h1>
-            <p class="result-subtitle">Тест завершен</p>
-        </div>
-
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-value" id="stat-time">0с</div>
-                <div class="stat-label">Время</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="stat-errors">0</div>
-                <div class="stat-label">Ошибок</div>
-            </div>
-        </div>
-
-        <h3 class="section-title">Результаты финального теста</h3>
-        <table id="results-table">
-            <thead><tr><th>Вопрос</th><th>Ответ</th><th>Статус</th></tr></thead>
-            <tbody></tbody>
-        </table>
+        <!-- Единая итоговая сводка (как в mt_v2 / ft_v2): ФИО+группа, оценка, тема, начало/окончание, время -->
+        <div class="result-info-block" id="result-summary"></div>
 
         <!-- Сохранение результата через Student Tracker (save_all_result): студент указывает только ИД -->
         <div class="save-result-block" id="save-result-block">
-            <h3 class="section-title">Сохранение результата</h3>
+            <h3 class="section-title">💾 Сохранение результата</h3>
+            <p class="save-result-hint">Введите ваш ИД (студенческий билет) — остальная информация (ФИО, группа, название теста, вопросы, правильные ответы, время) возьмётся из результатов автоматически. После сохранения все оценки откроются в новой вкладке.</p>
             <div class="input-group">
-                <label for="input-student-id">ИД студента (студенческий билет)</label>
-                <input type="text" id="input-student-id" placeholder="Например: 2411234">
+                <input type="text" id="input-student-id" placeholder="ИД студента (студенческий билет)">
             </div>
-            <button class="btn" id="btn-save-result" type="button">Сохранить результат</button>
+            <button class="btn" id="btn-save-result" type="button">💾 Сохранить результат</button>
             <div class="save-result-status" id="save-result-status"></div>
         </div>
+
+        <!-- Разбор ответов: показаны только правильные ответы -->
+        <div class="results-detail" id="results-detail"></div>
     </div>
 </div>
 
